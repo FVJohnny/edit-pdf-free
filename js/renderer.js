@@ -261,6 +261,11 @@ function sampleTextColor(canvas, tx, originalWidth, fontSize, str) {
 function setupDrag(span, textItemData, canvas, fontSize) {
     let dragState = null;
 
+    // Prevent native browser drag (e.g. dragging selected text) from interfering
+    span.addEventListener('dragstart', (e) => {
+        e.preventDefault();
+    });
+
     span.addEventListener('mousedown', (e) => {
         if (textItemData.element.contentEditable === 'true') return;
         e.preventDefault();

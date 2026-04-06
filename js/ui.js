@@ -20,18 +20,24 @@ animateElements.forEach(el => observer.observe(el));
 let dragCounter = 0;
 
 export function initDragDrop(onFileDrop) {
+    function hasFiles(e) {
+        return e.dataTransfer && e.dataTransfer.types && e.dataTransfer.types.includes('Files');
+    }
+
     document.addEventListener('dragover', (e) => {
         e.preventDefault();
     });
 
     document.addEventListener('dragenter', (e) => {
         e.preventDefault();
+        if (!hasFiles(e)) return;
         dragCounter++;
         document.body.classList.add('drag-over-page');
     });
 
     document.addEventListener('dragleave', (e) => {
         e.preventDefault();
+        if (!hasFiles(e)) return;
         dragCounter--;
         if (dragCounter === 0) {
             document.body.classList.remove('drag-over-page');
