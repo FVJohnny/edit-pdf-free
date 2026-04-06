@@ -302,11 +302,89 @@ async function renderPDF() {
                 bgColor: bgColor
             };
 
+            // Track movement offset (in CSS/canvas pixels)
+            textItemData.moveOffsetX = 0;
+            textItemData.moveOffsetY = 0;
+            textItemData.originalCovered = false;
+            // Store original CSS position for covering
+            textItemData.cssLeft = parseFloat(span.style.left);
+            textItemData.cssTop = parseFloat(span.style.top);
+
             textItems.push(textItemData);
 
-            span.addEventListener('click', (e) => {
+            // Drag to move, click to edit
+            let dragState = null;
+
+            span.addEventListener('mousedown', (e) => {
+                if (textItemData.element.contentEditable === 'true') return;
+                e.preventDefault();
                 e.stopPropagation();
-                makeEditable(textItemData);
+
+                dragState = {
+                    startX: e.clientX,
+                    startY: e.clientY,
+                    origLeft: parseFloat(span.style.left),
+                    origTop: parseFloat(span.style.top),
+                    moved: false
+                };
+
+                const onMouseMove = (e) => {
+                    if (!dragState) return;
+                    const dx = e.clientX - dragState.startX;
+                    const dy = e.clientY - dragState.startY;
+
+                    if (!dragState.moved && Math.abs(dx) + Math.abs(dy) > 3) {
+                        dragState.moved = true;
+                        span.classList.add('dragging');
+                    }
+
+                    if (dragState.moved) {
+                        span.style.left = (dragState.origLeft + dx) + 'px';
+                        span.style.top = (dragState.origTop + dy) + 'px';
+                    }
+                };
+
+                const onMouseUp = (e) => {
+                    document.removeEventListener('mousemove', onMouseMove);
+                    document.removeEventListener('mouseup', onMouseUp);
+
+                    if (!dragState) return;
+
+                    if (dragState.moved) {
+                        const dx = e.clientX - dragState.startX;
+                        const dy = e.clientY - dragState.startY;
+                        textItemData.moveOffsetX += dx;
+                        textItemData.moveOffsetY += dy;
+                        span.classList.remove('dragging');
+                        span.classList.add('modified', 'moved');
+
+                        // Cover the original position on the canvas only once
+                        if (!textItemData.originalCovered) {
+                            const ctx = canvas.getContext('2d');
+                            const bgR = Math.round(textItemData.bgColor.r * 255);
+                            const bgG = Math.round(textItemData.bgColor.g * 255);
+                            const bgB = Math.round(textItemData.bgColor.b * 255);
+                            ctx.fillStyle = `rgb(${bgR}, ${bgG}, ${bgB})`;
+                            const coverX = textItemData.cssLeft - 4;
+                            const coverY = textItemData.cssTop - 4;
+                            const coverW = textItemData.originalWidth + 12;
+                            const coverH = fontSize + 8;
+                            ctx.fillRect(coverX, coverY, coverW, coverH);
+                            textItemData.originalCovered = true;
+                        }
+
+                        // Show text with no background (transparent overlay)
+                        span.style.color = 'black';
+                    } else {
+                        // It was a click, not a drag — edit the text
+                        makeEditable(textItemData);
+                    }
+
+                    dragState = null;
+                };
+
+                document.addEventListener('mousemove', onMouseMove);
+                document.addEventListener('mouseup', onMouseUp);
             });
 
             textLayerDiv.appendChild(span);
@@ -343,7 +421,8 @@ function makeEditable(textItem) {
         textItem.element.contentEditable = false;
         textItem.element.classList.remove('editing');
         textItem.currentText = textItem.element.textContent;
-        if (textItem.currentText !== textItem.originalText) {
+        const isMoved = textItem.moveOffsetX !== 0 || textItem.moveOffsetY !== 0;
+        if (textItem.currentText !== textItem.originalText || isMoved) {
             textItem.element.classList.add('modified');
             textItem.element.style.minWidth = textItem.originalWidth + 'px';
         } else {
@@ -412,7 +491,8 @@ saveBtn.addEventListener('click', async () => {
             if (!pageTexts[item.pageNum]) {
                 pageTexts[item.pageNum] = [];
             }
-            if (item.currentText !== item.originalText) {
+            const isMoved = item.moveOffsetX !== 0 || item.moveOffsetY !== 0;
+            if (item.currentText !== item.originalText || isMoved) {
                 pageTexts[item.pageNum].push(item);
             }
         });
@@ -569,9 +649,16 @@ saveBtn.addEventListener('click', async () => {
             }
 
             for (const item of items) {
-                const x = item.transform[4];
-                const y = item.transform[5];
+                const origX = item.transform[4];
+                const origY = item.transform[5];
                 const fontSize = Math.sqrt(item.transform[0] * item.transform[0] + item.transform[1] * item.transform[1]);
+
+                // Convert CSS pixel offset to PDF units
+                const moveX = (item.moveOffsetX || 0) / item.scale;
+                const moveY = -(item.moveOffsetY || 0) / item.scale; // CSS Y is inverted vs PDF Y
+
+                const newX = origX + moveX;
+                const newY = origY + moveY;
 
                 const cleanCurrentText = item.currentText.replace(/[\r\n]/g, ' ');
 
@@ -581,22 +668,22 @@ saveBtn.addEventListener('click', async () => {
                 const newTextWidth = fallbackFont.widthOfTextAtSize(cleanCurrentText, fontSize);
                 const coverWidth = Math.max(originalPdfWidth, newTextWidth) + 6;
 
-                // Draw background rectangle to cover original text
+                // Draw background rectangle at ORIGINAL position to cover old text
                 const bg = item.bgColor || { r: 1, g: 1, b: 1 };
                 page.drawRectangle({
-                    x: x - 2,
-                    y: y - (fontSize * 0.3),
+                    x: origX - 2,
+                    y: origY - (fontSize * 0.3),
                     width: coverWidth,
                     height: fontSize * 1.4,
                     color: PDFLib.rgb(bg.r, bg.g, bg.b),
                 });
 
                 // Try to use the original font via raw content stream with CMap encoding
+                // Draw text at NEW position (original + move offset)
                 const fontInfo = await getFontInfo(page, item.fontName);
                 let usedOriginalFont = false;
 
                 if (fontInfo) {
-                    // Check if all characters can be encoded with this font's CMap
                     const hexChars = [];
                     let allMapped = true;
                     for (const ch of cleanCurrentText) {
@@ -613,7 +700,7 @@ saveBtn.addEventListener('click', async () => {
                     if (allMapped && hexChars.length > 0) {
                         const hexString = hexChars.join('');
                         const streamContent =
-                            `q\nBT\n/${fontInfo.pdfFontName} ${fontSize} Tf\n${x} ${y} Td\n<${hexString}> Tj\nET\nQ\n`;
+                            `q\nBT\n/${fontInfo.pdfFontName} ${fontSize} Tf\n${newX} ${newY} Td\n<${hexString}> Tj\nET\nQ\n`;
 
                         const encoder = new TextEncoder();
                         const streamBytes = encoder.encode(streamContent);
@@ -627,8 +714,8 @@ saveBtn.addEventListener('click', async () => {
 
                 if (!usedOriginalFont) {
                     page.drawText(cleanCurrentText, {
-                        x: x,
-                        y: y,
+                        x: newX,
+                        y: newY,
                         size: fontSize,
                         font: fallbackFont,
                         color: PDFLib.rgb(0, 0, 0),

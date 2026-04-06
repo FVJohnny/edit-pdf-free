@@ -653,6 +653,28 @@ body.drag-over-page::after {
     display: inline-block;
 }
 
+.editable-text.moved {
+    color: black;
+    background: transparent !important;
+    outline: 1px dashed rgba(60, 176, 67, 0.6);
+    display: inline-block;
+}
+
+.editable-text.moved:hover {
+    background: transparent !important;
+    box-shadow: 0 0 0 2px rgba(60, 176, 67, 0.4);
+}
+
+.editable-text.dragging {
+    color: black !important;
+    background: transparent !important;
+    outline: 2px dashed var(--accent);
+    z-index: 1001;
+    cursor: grabbing;
+    opacity: 0.85;
+    display: inline-block;
+}
+
 /* ============================================
    Features Section
    ============================================ */
