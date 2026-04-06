@@ -628,13 +628,13 @@ body.drag-over-page::after {
 }
 
 .editable-text:hover {
-    color: black;
+    color: var(--text-color, black);
     background-color: var(--bg-color, white);
     box-shadow: 0 0 0 2px rgba(232, 68, 68, 0.4);
 }
 
 .editable-text.modified {
-    color: black;
+    color: var(--text-color, black);
     background: var(--bg-color, white);
     outline: 1px solid rgba(60, 176, 67, 0.5);
     display: inline-block;
@@ -645,7 +645,7 @@ body.drag-over-page::after {
 }
 
 .editable-text.editing {
-    color: black !important;
+    color: var(--text-color, black) !important;
     background: var(--bg-color, white);
     outline: 2px solid var(--accent);
     z-index: 1000;
@@ -654,7 +654,7 @@ body.drag-over-page::after {
 }
 
 .editable-text.moved {
-    color: black;
+    color: var(--text-color, black);
     background: transparent !important;
     outline: 1px dashed rgba(60, 176, 67, 0.6);
     display: inline-block;
@@ -666,7 +666,7 @@ body.drag-over-page::after {
 }
 
 .editable-text.dragging {
-    color: black !important;
+    color: var(--text-color, black) !important;
     background: transparent !important;
     outline: 2px dashed var(--accent);
     z-index: 1001;

@@ -278,11 +278,49 @@ async function renderPDF() {
                 }
             }
 
+            // Sample text color from the canvas (most common dark color in the text area)
+            let textColor = { r: 0, g: 0, b: 0 }; // default black
+            if (item.str.trim().length > 0) {
+                const textStripY = Math.round(tx[5] - fontSize * 0.5);
+                const textStripX = Math.max(0, Math.round(tx[4]));
+                const textStripW = Math.min(Math.round(originalWidth), canvas.width - textStripX);
+                if (textStripW > 0 && textStripY >= 0 && textStripY < canvas.height) {
+                    const textStripData = ctx.getImageData(textStripX, textStripY, textStripW, 1).data;
+                    const darkColorCounts = {};
+                    for (let i = 0; i < textStripData.length; i += 4) {
+                        const r = textStripData[i], g = textStripData[i+1], b = textStripData[i+2];
+                        const brightness = r * 0.299 + g * 0.587 + b * 0.114;
+                        // Only consider dark-ish pixels (text) or strongly colored pixels
+                        const saturation = Math.max(r, g, b) - Math.min(r, g, b);
+                        if (brightness >= 200 && saturation < 50) continue; // skip light bg pixels
+                        const qr = Math.round(r / 8) * 8;
+                        const qg = Math.round(g / 8) * 8;
+                        const qb = Math.round(b / 8) * 8;
+                        const key = `${qr},${qg},${qb}`;
+                        if (!darkColorCounts[key]) darkColorCounts[key] = { count: 0, r, g, b };
+                        darkColorCounts[key].count++;
+                    }
+                    let bestDarkCount = 0;
+                    for (const c of Object.values(darkColorCounts)) {
+                        if (c.count > bestDarkCount) {
+                            bestDarkCount = c.count;
+                            textColor = { r: c.r / 255, g: c.g / 255, b: c.b / 255 };
+                        }
+                    }
+                }
+            }
+
             // Store bg color as CSS custom property for hover/editing states
             const bgR = Math.round(bgColor.r * 255);
             const bgG = Math.round(bgColor.g * 255);
             const bgB = Math.round(bgColor.b * 255);
             span.style.setProperty('--bg-color', `rgb(${bgR}, ${bgG}, ${bgB})`);
+
+            // Set text color for editing states
+            const tcR = Math.round(textColor.r * 255);
+            const tcG = Math.round(textColor.g * 255);
+            const tcB = Math.round(textColor.b * 255);
+            span.style.setProperty('--text-color', `rgb(${tcR}, ${tcG}, ${tcB})`);
 
             const textItemData = {
                 element: span,
@@ -299,7 +337,8 @@ async function renderPDF() {
                 fontStyle: fontStyle,
                 scale: viewport.scale,
                 originalWidth: originalWidth,
-                bgColor: bgColor
+                bgColor: bgColor,
+                textColor: textColor
             };
 
             // Track movement offset (in CSS/canvas pixels)
@@ -320,11 +359,14 @@ async function renderPDF() {
                 e.preventDefault();
                 e.stopPropagation();
 
+                const spanRect = span.getBoundingClientRect();
+
                 dragState = {
                     startX: e.clientX,
                     startY: e.clientY,
                     origLeft: parseFloat(span.style.left),
                     origTop: parseFloat(span.style.top),
+                    spanW: spanRect.width,
                     moved: false
                 };
 
@@ -365,16 +407,19 @@ async function renderPDF() {
                             const bgG = Math.round(textItemData.bgColor.g * 255);
                             const bgB = Math.round(textItemData.bgColor.b * 255);
                             ctx.fillStyle = `rgb(${bgR}, ${bgG}, ${bgB})`;
-                            const coverX = textItemData.cssLeft - 4;
-                            const coverY = textItemData.cssTop - 4;
-                            const coverW = textItemData.originalWidth + 12;
-                            const coverH = fontSize + 8;
+                            // cssLeft/cssTop match canvas buffer coordinates
+                            // Offset Y up by fontSize*0.4 because cssTop is near the baseline,
+                            // but the text renders above it
+                            const coverX = textItemData.cssLeft;
+                            const coverY = textItemData.cssTop - fontSize * 0.4;
+                            const coverW = dragState.spanW + 8;
+                            const coverH = fontSize * 1.5;
                             ctx.fillRect(coverX, coverY, coverW, coverH);
                             textItemData.originalCovered = true;
                         }
 
                         // Show text with no background (transparent overlay)
-                        span.style.color = 'black';
+                        span.style.color = span.style.getPropertyValue('--text-color') || 'black';
                     } else {
                         // It was a click, not a drag — edit the text
                         makeEditable(textItemData);
@@ -699,8 +744,9 @@ saveBtn.addEventListener('click', async () => {
 
                     if (allMapped && hexChars.length > 0) {
                         const hexString = hexChars.join('');
+                        const tc = item.textColor || { r: 0, g: 0, b: 0 };
                         const streamContent =
-                            `q\nBT\n/${fontInfo.pdfFontName} ${fontSize} Tf\n${newX} ${newY} Td\n<${hexString}> Tj\nET\nQ\n`;
+                            `q\nBT\n${tc.r} ${tc.g} ${tc.b} rg\n/${fontInfo.pdfFontName} ${fontSize} Tf\n${newX} ${newY} Td\n<${hexString}> Tj\nET\nQ\n`;
 
                         const encoder = new TextEncoder();
                         const streamBytes = encoder.encode(streamContent);
@@ -713,12 +759,13 @@ saveBtn.addEventListener('click', async () => {
                 }
 
                 if (!usedOriginalFont) {
+                    const tc = item.textColor || { r: 0, g: 0, b: 0 };
                     page.drawText(cleanCurrentText, {
                         x: newX,
                         y: newY,
                         size: fontSize,
                         font: fallbackFont,
-                        color: PDFLib.rgb(0, 0, 0),
+                        color: PDFLib.rgb(tc.r, tc.g, tc.b),
                     });
                 }
             }
