@@ -379,6 +379,24 @@ async function renderPDF() {
                         dragState.moved = true;
                         span.classList.add('dragging');
                         showFormatToolbar(textItemData);
+
+                        // Cover the original position on the canvas immediately
+                        if (!textItemData.originalCovered) {
+                            const ctx = canvas.getContext('2d');
+                            const bgR = Math.round(textItemData.bgColor.r * 255);
+                            const bgG = Math.round(textItemData.bgColor.g * 255);
+                            const bgB = Math.round(textItemData.bgColor.b * 255);
+                            ctx.fillStyle = `rgb(${bgR}, ${bgG}, ${bgB})`;
+                            const coverX = textItemData.cssLeft;
+                            const coverY = textItemData.cssTop - fontSize * 0.4;
+                            const coverW = dragState.spanW + 8;
+                            const coverH = fontSize * 1.5;
+                            ctx.fillRect(coverX, coverY, coverW, coverH);
+                            textItemData.originalCovered = true;
+                        }
+
+                        // Show text with no background (transparent overlay)
+                        span.style.color = span.style.getPropertyValue('--text-color') || 'black';
                     }
 
                     if (dragState.moved) {
@@ -402,27 +420,6 @@ async function renderPDF() {
                         textItemData.moveOffsetY += dy;
                         span.classList.remove('dragging');
                         span.classList.add('modified', 'moved');
-
-                        // Cover the original position on the canvas only once
-                        if (!textItemData.originalCovered) {
-                            const ctx = canvas.getContext('2d');
-                            const bgR = Math.round(textItemData.bgColor.r * 255);
-                            const bgG = Math.round(textItemData.bgColor.g * 255);
-                            const bgB = Math.round(textItemData.bgColor.b * 255);
-                            ctx.fillStyle = `rgb(${bgR}, ${bgG}, ${bgB})`;
-                            // cssLeft/cssTop match canvas buffer coordinates
-                            // Offset Y up by fontSize*0.4 because cssTop is near the baseline,
-                            // but the text renders above it
-                            const coverX = textItemData.cssLeft;
-                            const coverY = textItemData.cssTop - fontSize * 0.4;
-                            const coverW = dragState.spanW + 8;
-                            const coverH = fontSize * 1.5;
-                            ctx.fillRect(coverX, coverY, coverW, coverH);
-                            textItemData.originalCovered = true;
-                        }
-
-                        // Show text with no background (transparent overlay)
-                        span.style.color = span.style.getPropertyValue('--text-color') || 'black';
 
                         // Show format toolbar after move
                         showFormatToolbar(textItemData);
@@ -578,7 +575,6 @@ fmtColor.addEventListener('input', () => {
     };
     applyFormat(activeTextItem);
 });
-
 // ============================================
 // Make text editable inline
 // ============================================
@@ -669,7 +665,7 @@ saveBtn.addEventListener('click', async () => {
             return;
         }
 
-        const pdfLibDoc = await PDFLib.PDFDocument.load(pdfBytes);
+        const pdfLibDoc = await PDFLib.PDFDocument.load(pdfBytes, { ignoreEncryption: true });
         if (typeof fontkit !== 'undefined') {
             pdfLibDoc.registerFontkit(fontkit);
         }
