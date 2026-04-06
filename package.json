@@ -4,8 +4,7 @@
   "description": "A simple PDF text editor",
   "main": "index.html",
   "scripts": {
-    "start": "npx serve .",
-    "prod:deploy": "./deploy.sh"
+    "start": "npx serve ."
   },
   "dependencies": {
     "pdf-lib": "^1.17.1"
