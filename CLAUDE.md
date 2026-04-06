@@ -50,6 +50,8 @@ Opens on `http://localhost:3000` by default.
 
 Use the MCP Chrome tools (`mcp__chrome__*`) to test features in the browser. Launch Chrome, navigate to `http://localhost:3000`, and upload `tests/fixtures/with-colored-texts-and-images.pdf`.
 
+**Important:** Always interact like a real user — use `click`, `type`, `scroll`, `press_key`, and `screenshot` tools. Do NOT use `eval` to manipulate DOM, change text, or simulate events. Only use `eval` for setup that can't be done through the UI (e.g. uploading a file via the file input).
+
 ### Test plan (run after every significant change)
 
 1. **Load PDF** — Upload `test.pdf`, verify all pages render and text items appear as invisible overlays (hover to reveal).
