@@ -140,18 +140,6 @@ async function renderPDF() {
 
         const textContent = await page.getTextContent();
 
-        // Cover rendered text with white rectangles
-        textContent.items.forEach(item => {
-            const tx = pdfjsLib.Util.transform(viewport.transform, item.transform);
-            const x = tx[4];
-            const y = tx[5] - item.height;
-            const width = item.width * viewport.scale;
-            const height = item.height;
-
-            context.fillStyle = 'white';
-            context.fillRect(x - 1, y - 1, width + 2, height + 3);
-        });
-
         const pageContainer = document.createElement('div');
         pageContainer.style.position = 'relative';
         pageContainer.style.marginBottom = '20px';
@@ -177,8 +165,10 @@ async function renderPDF() {
             span.style.left = tx[4] + 'px';
             span.style.top = (tx[5] - item.height) + 'px';
 
-            const fontSize = Math.sqrt(item.transform[0] * item.transform[0] + item.transform[1] * item.transform[1]);
+            const fontSizeRaw = Math.sqrt(item.transform[0] * item.transform[0] + item.transform[1] * item.transform[1]);
+            const fontSize = fontSizeRaw * viewport.scale;
             span.style.fontSize = fontSize + 'px';
+            span.style.lineHeight = '1';
 
             let fontFamily = 'Arial, Helvetica, sans-serif';
             let fontWeight = '400';
@@ -213,6 +203,8 @@ async function renderPDF() {
             span.style.webkitFontSmoothing = 'antialiased';
             span.style.mozOsxFontSmoothing = 'grayscale';
 
+            const originalWidth = item.width * viewport.scale;
+
             const textItemData = {
                 element: span,
                 pageNum: pageNum,
@@ -225,7 +217,8 @@ async function renderPDF() {
                 fontName: item.fontName,
                 fontFamily: fontFamily,
                 fontWeight: fontWeight,
-                scale: viewport.scale
+                scale: viewport.scale,
+                originalWidth: originalWidth
             };
 
             textItems.push(textItemData);
@@ -254,6 +247,7 @@ function makeEditable(textItem) {
         el.classList.remove('editing');
     });
 
+    textItem.element.style.minWidth = textItem.originalWidth + 'px';
     textItem.element.contentEditable = true;
     textItem.element.classList.add('editing');
     textItem.element.focus();
@@ -268,6 +262,13 @@ function makeEditable(textItem) {
         textItem.element.contentEditable = false;
         textItem.element.classList.remove('editing');
         textItem.currentText = textItem.element.textContent;
+        if (textItem.currentText !== textItem.originalText) {
+            textItem.element.classList.add('modified');
+            textItem.element.style.minWidth = textItem.originalWidth + 'px';
+        } else {
+            textItem.element.classList.remove('modified');
+            textItem.element.style.minWidth = '';
+        }
     };
 
     textItem.element.addEventListener('blur', finishEditing, { once: true });
@@ -320,7 +321,7 @@ saveBtn.addEventListener('click', async () => {
             items.forEach(item => {
                 const x = item.transform[4];
                 const y = item.transform[5];
-                const fontSize = item.transform[0];
+                const fontSize = Math.sqrt(item.transform[0] * item.transform[0] + item.transform[1] * item.transform[1]);
 
                 let font = helvetica;
 
@@ -332,32 +333,27 @@ saveBtn.addEventListener('click', async () => {
                     font = item.fontWeight === '700' ? helveticaBold : helvetica;
                 }
 
-                const cleanOriginalText = item.originalText.replace(/[\r\n]/g, ' ');
                 const cleanCurrentText = item.currentText.replace(/[\r\n]/g, ' ');
 
-                let adjustedFontSize = fontSize;
-                if (item.fontName && item.fontName.startsWith('g_d0_')) {
-                    adjustedFontSize = fontSize * 0.97;
-                }
-
-                const oldTextWidth = font.widthOfTextAtSize(cleanOriginalText, adjustedFontSize);
-                const newTextWidth = font.widthOfTextAtSize(cleanCurrentText, adjustedFontSize);
+                // Use the original width from pdf.js (already in PDF units)
+                const originalPdfWidth = item.width;
+                const newTextWidth = font.widthOfTextAtSize(cleanCurrentText, fontSize);
+                const coverWidth = Math.max(originalPdfWidth, newTextWidth) + 6;
 
                 page.drawRectangle({
-                    x: x - 1,
-                    y: y - 2,
-                    width: Math.max(oldTextWidth, newTextWidth) + 12,
-                    height: fontSize + 6,
+                    x: x - 2,
+                    y: y - (fontSize * 0.3),
+                    width: coverWidth,
+                    height: fontSize * 1.4,
                     color: PDFLib.rgb(1, 1, 1),
                 });
 
                 page.drawText(cleanCurrentText, {
                     x: x,
                     y: y,
-                    size: adjustedFontSize,
+                    size: fontSize,
                     font: font,
                     color: PDFLib.rgb(0, 0, 0),
-                    lineHeight: fontSize,
                 });
             });
         }
