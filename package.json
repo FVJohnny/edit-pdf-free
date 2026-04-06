@@ -1,0 +1,16 @@
+{
+  "name": "pdf-editor",
+  "version": "1.0.0",
+  "description": "A simple PDF text editor",
+  "main": "index.html",
+  "scripts": {
+    "start": "npx serve .",
+    "prod:deploy": "./deploy.sh"
+  },
+  "dependencies": {
+    "pdf-lib": "^1.17.1"
+  },
+  "devDependencies": {
+    "serve": "^14.2.0"
+  }
+}

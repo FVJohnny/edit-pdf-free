@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PDF Text Editor</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/web/pdf_viewer.css">
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>PDF Text Editor</h1>
+        </header>
+
+        <div class="controls">
+            <input type="file" id="pdfInput" accept=".pdf">
+            <button id="saveBtn" disabled>Save PDF</button>
+        </div>
+
+        <div class="editor-container">
+            <div id="pdfViewer" class="pdf-viewer">
+                <p class="placeholder">Import a PDF file to start editing<br><small>Click on any text to edit it directly</small></p>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
