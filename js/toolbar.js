@@ -82,6 +82,11 @@ function applyFormat(textItem) {
     updateToolbarState(textItem);
 }
 
+// Reposition toolbar on scroll so it follows the text
+window.addEventListener('scroll', () => {
+    if (activeTextItem) repositionToolbar(activeTextItem);
+}, true);
+
 // Prevent toolbar clicks from blurring the editable text
 formatToolbar.addEventListener('mousedown', (e) => {
     e.preventDefault();
