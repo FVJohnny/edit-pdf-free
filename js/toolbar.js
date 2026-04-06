@@ -8,6 +8,7 @@ const fmtSizeDown = document.getElementById('fmtSizeDown');
 const fmtSizeUp = document.getElementById('fmtSizeUp');
 const fmtSizeLabel = document.getElementById('fmtSizeLabel');
 const fmtColor = document.getElementById('fmtColor');
+const fmtDelete = document.getElementById('fmtDelete');
 
 let activeTextItem = null;
 
@@ -126,6 +127,31 @@ fmtSizeUp.addEventListener('click', () => {
     const current = activeTextItem.fontSizeOverride ?? Math.round(parseFloat(activeTextItem.element.style.fontSize));
     activeTextItem.fontSizeOverride = current + 1;
     applyFormat(activeTextItem);
+});
+
+fmtDelete.addEventListener('click', () => {
+    if (!activeTextItem) return;
+    // Cover the original position on the canvas
+    if (!activeTextItem.originalCovered && activeTextItem.canvas) {
+        const ctx = activeTextItem.canvas.getContext('2d');
+        const bgR = Math.round(activeTextItem.bgColor.r * 255);
+        const bgG = Math.round(activeTextItem.bgColor.g * 255);
+        const bgB = Math.round(activeTextItem.bgColor.b * 255);
+        ctx.fillStyle = `rgb(${bgR}, ${bgG}, ${bgB})`;
+        const fs = activeTextItem.renderedFontSize;
+        const coverX = activeTextItem.cssLeft;
+        const coverY = activeTextItem.cssTop - fs * 0.4;
+        const coverW = activeTextItem.originalWidth + 8;
+        const coverH = fs * 1.5;
+        ctx.fillRect(coverX, coverY, coverW, coverH);
+        activeTextItem.originalCovered = true;
+    }
+    activeTextItem.deleted = true;
+    activeTextItem.element.classList.add('deleted');
+    activeTextItem.element.classList.remove('editing', 'modified', 'moved');
+    activeTextItem.element.contentEditable = false;
+    activeTextItem.element.style.display = 'none';
+    hideFormatToolbar();
 });
 
 // Track the text item when color picker opens, since the native color dialog

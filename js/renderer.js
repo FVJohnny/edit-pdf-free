@@ -108,7 +108,9 @@ export async function renderPDF(pdfDoc, pdfViewer, textItems) {
                 moveOffsetY: 0,
                 originalCovered: false,
                 cssLeft: parseFloat(span.style.left),
-                cssTop: parseFloat(span.style.top)
+                cssTop: parseFloat(span.style.top),
+                canvas: canvas,
+                renderedFontSize: fontSize
             };
 
             textItems.push(textItemData);

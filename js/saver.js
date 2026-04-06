@@ -49,7 +49,7 @@ export async function savePDF(pdfBytes, textItems, originalFileName) {
             const isMoved = item.moveOffsetX !== 0 || item.moveOffsetY !== 0;
             const hasOverrides = item.fontWeightOverride || item.fontStyleOverride ||
                                  item.fontSizeOverride || item.textColorOverride;
-            if (item.currentText !== item.originalText || isMoved || hasOverrides) {
+            if (item.deleted || item.currentText !== item.originalText || isMoved || hasOverrides) {
                 pageTexts[item.pageNum].push(item);
             }
         });
@@ -220,6 +220,9 @@ export async function savePDF(pdfBytes, textItems, originalFileName) {
                     height: origFontSize * 1.4,
                     color: PDFLib.rgb(bg.r, bg.g, bg.b),
                 });
+
+                // Deleted items only need the cover rect, no new text
+                if (item.deleted) continue;
 
                 const hasStyleOverride = item.fontWeightOverride || item.fontStyleOverride;
                 const fontInfo = hasStyleOverride ? null : await getFontInfo(page, item.fontName);

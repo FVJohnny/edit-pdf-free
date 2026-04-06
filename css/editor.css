@@ -380,3 +380,9 @@ body.drag-over-page::after {
     border: none;
     border-radius: 2px;
 }
+
+.fmt-btn--del {
+    color: #e84444;
+    font-size: 0.85rem;
+    line-height: 1;
+}
