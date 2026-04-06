@@ -378,11 +378,14 @@ async function renderPDF() {
                     if (!dragState.moved && Math.abs(dx) + Math.abs(dy) > 3) {
                         dragState.moved = true;
                         span.classList.add('dragging');
+                        showFormatToolbar(textItemData);
                     }
 
                     if (dragState.moved) {
                         span.style.left = (dragState.origLeft + dx) + 'px';
                         span.style.top = (dragState.origTop + dy) + 'px';
+                        // Move toolbar with the text
+                        repositionToolbar(textItemData);
                     }
                 };
 
@@ -456,31 +459,30 @@ const fmtColor = document.getElementById('fmtColor');
 
 let activeTextItem = null;
 
+function repositionToolbar(textItem) {
+    const rect = textItem.element.getBoundingClientRect();
+    const tbRect = formatToolbar.getBoundingClientRect();
+
+    let left = rect.left + rect.width / 2 - tbRect.width / 2;
+    let top = rect.top - tbRect.height - 8;
+
+    if (left < 8) left = 8;
+    if (left + tbRect.width > window.innerWidth - 8) left = window.innerWidth - tbRect.width - 8;
+    if (top < 8) top = rect.bottom + 8;
+
+    formatToolbar.style.left = left + 'px';
+    formatToolbar.style.top = top + 'px';
+}
+
 function showFormatToolbar(textItem) {
     activeTextItem = textItem;
-    const el = textItem.element;
-    const rect = el.getBoundingClientRect();
 
     // Make visible off-screen first to measure, then position
     formatToolbar.style.left = '-9999px';
     formatToolbar.style.top = '-9999px';
     formatToolbar.style.display = 'flex';
 
-    // Force reflow to get accurate measurements
-    const tbRect = formatToolbar.getBoundingClientRect();
-
-    let left = rect.left + rect.width / 2 - tbRect.width / 2;
-    let top = rect.top - tbRect.height - 8;
-
-    // Keep within viewport
-    if (left < 8) left = 8;
-    if (left + tbRect.width > window.innerWidth - 8) left = window.innerWidth - tbRect.width - 8;
-    if (top < 8) top = rect.bottom + 8; // flip below if no room above
-
-    formatToolbar.style.left = left + 'px';
-    formatToolbar.style.top = top + 'px';
-
-    // Sync toolbar state with textItem
+    repositionToolbar(textItem);
     updateToolbarState(textItem);
 }
 
@@ -533,7 +535,8 @@ formatToolbar.addEventListener('mousedown', (e) => {
 document.addEventListener('mousedown', (e) => {
     if (!activeTextItem) return;
     if (formatToolbar.contains(e.target)) return;
-    if (activeTextItem.element.contains(e.target)) return;
+    // Don't hide if clicking on any editable text (could be starting a drag or edit)
+    if (e.target.classList && e.target.classList.contains('editable-text')) return;
     hideFormatToolbar();
 });
 
