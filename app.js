@@ -123,10 +123,13 @@ async function renderPDF() {
 
     for (let pageNum = 1; pageNum <= pdfDoc.numPages; pageNum++) {
         const page = await pdfDoc.getPage(pageNum);
-        const viewport = page.getViewport({ scale: 1.5 });
+        const containerWidth = pdfViewer.clientWidth;
+        const unscaledViewport = page.getViewport({ scale: 1 });
+        const scale = containerWidth / unscaledViewport.width;
+        const viewport = page.getViewport({ scale });
 
         const canvas = document.createElement('canvas');
-        const context = canvas.getContext('2d');
+        const context = canvas.getContext('2d', { willReadFrequently: true });
         canvas.height = viewport.height;
         canvas.width = viewport.width;
         canvas.className = 'pdf-page';
@@ -170,27 +173,63 @@ async function renderPDF() {
             span.style.fontSize = fontSize + 'px';
             span.style.lineHeight = '1';
 
-            let fontFamily = 'Arial, Helvetica, sans-serif';
+            let fontFamily = 'Calibri, Arial, Helvetica, sans-serif';
             let fontWeight = '400';
+            let fontStyle = 'normal';
             const fontName = item.fontName.toLowerCase();
 
-            if (fontName.includes('times') || fontName.includes('serif')) {
+            // Check PDF.js style info for this font (includes fontFamily and weight flags)
+            const styleInfo = textContent.styles && textContent.styles[item.fontName];
+
+            // Try to get the actual font name from PDF.js common objects
+            let actualFontName = '';
+            try {
+                const fontObj = page.commonObjs.get(item.fontName);
+                if (fontObj && fontObj.name) actualFontName = fontObj.name.toLowerCase();
+            } catch (e) {}
+
+            const fontNameToCheck = actualFontName || fontName;
+
+            if (fontNameToCheck.includes('times') || (fontNameToCheck.includes('serif') && !fontNameToCheck.includes('sans'))) {
                 fontFamily = 'Times New Roman, serif';
-            } else if (fontName.includes('courier') || fontName.includes('mono')) {
+            } else if (fontNameToCheck.includes('courier') || fontNameToCheck.includes('mono')) {
                 fontFamily = 'Courier New, monospace';
-            } else if (fontName.includes('helvetica') || fontName.includes('arial')) {
+            } else if (fontNameToCheck.includes('calibri')) {
+                fontFamily = 'Calibri, Arial, Helvetica, sans-serif';
+            } else if (fontNameToCheck.includes('helvetica')) {
+                fontFamily = 'Helvetica, Arial, sans-serif';
+            } else if (fontNameToCheck.includes('arial')) {
                 fontFamily = 'Arial, Helvetica, sans-serif';
+            } else if (fontNameToCheck.includes('verdana')) {
+                fontFamily = 'Verdana, Geneva, sans-serif';
+            } else if (fontNameToCheck.includes('tahoma')) {
+                fontFamily = 'Tahoma, Geneva, sans-serif';
+            } else if (fontNameToCheck.includes('georgia')) {
+                fontFamily = 'Georgia, serif';
+            } else if (styleInfo && styleInfo.fontFamily) {
+                const sfam = styleInfo.fontFamily.toLowerCase();
+                if (sfam.includes('times') || (sfam.includes('serif') && !sfam.includes('sans'))) {
+                    fontFamily = 'Times New Roman, serif';
+                } else if (sfam.includes('courier') || sfam.includes('mono')) {
+                    fontFamily = 'Courier New, monospace';
+                }
             }
 
-            if (fontName.includes('bold')) {
+            // Detect bold from fontName, actual PDF font name, or styleInfo
+            if (fontName.includes('bold') || fontNameToCheck.includes('bold') ||
+                (styleInfo && styleInfo.fontWeight && styleInfo.fontWeight >= 700)) {
                 fontWeight = '700';
-            } else if (fontName.includes('light')) {
+            } else if (fontName.includes('light') || fontNameToCheck.includes('light')) {
                 fontWeight = '300';
-            } else if (fontName.includes('medium')) {
+            } else if (fontName.includes('medium') || fontNameToCheck.includes('medium')) {
                 fontWeight = '500';
             }
 
-            if (fontName.includes('italic') || fontName.includes('oblique')) {
+            // Detect italic from fontName, actual PDF font name, or styleInfo
+            if (fontName.includes('italic') || fontName.includes('oblique') ||
+                fontNameToCheck.includes('italic') || fontNameToCheck.includes('oblique') ||
+                (styleInfo && styleInfo.italic)) {
+                fontStyle = 'italic';
                 span.style.fontStyle = 'italic';
             }
 
@@ -205,6 +244,46 @@ async function renderPDF() {
 
             const originalWidth = item.width * viewport.scale;
 
+            // Sample background color from the canvas behind this text.
+            // Scan a horizontal strip across the text area and find the dominant
+            // (most frequent) color, ignoring very dark pixels which are likely text.
+            const ctx = canvas.getContext('2d');
+            let bgColor = { r: 1, g: 1, b: 1 }; // default white
+
+            const stripY = Math.round(tx[5]);  // just below baseline where bg is visible
+            const stripX = Math.max(0, Math.round(tx[4]));
+            const stripW = Math.min(Math.round(originalWidth), canvas.width - stripX);
+            if (stripW > 0 && stripY >= 0 && stripY < canvas.height) {
+                const stripData = ctx.getImageData(stripX, stripY, stripW, 1).data;
+                const colorCounts = {};
+                for (let i = 0; i < stripData.length; i += 4) {
+                    const r = stripData[i], g = stripData[i+1], b = stripData[i+2];
+                    // Skip very dark pixels (likely text) and nearly-dark pixels
+                    const brightness = r * 0.299 + g * 0.587 + b * 0.114;
+                    if (brightness < 80) continue;
+                    // Quantize to reduce noise (group similar colors)
+                    const qr = Math.round(r / 4) * 4;
+                    const qg = Math.round(g / 4) * 4;
+                    const qb = Math.round(b / 4) * 4;
+                    const key = `${qr},${qg},${qb}`;
+                    if (!colorCounts[key]) colorCounts[key] = { count: 0, r, g, b };
+                    colorCounts[key].count++;
+                }
+                let bestCount = 0;
+                for (const c of Object.values(colorCounts)) {
+                    if (c.count > bestCount) {
+                        bestCount = c.count;
+                        bgColor = { r: c.r / 255, g: c.g / 255, b: c.b / 255 };
+                    }
+                }
+            }
+
+            // Store bg color as CSS custom property for hover/editing states
+            const bgR = Math.round(bgColor.r * 255);
+            const bgG = Math.round(bgColor.g * 255);
+            const bgB = Math.round(bgColor.b * 255);
+            span.style.setProperty('--bg-color', `rgb(${bgR}, ${bgG}, ${bgB})`);
+
             const textItemData = {
                 element: span,
                 pageNum: pageNum,
@@ -217,8 +296,10 @@ async function renderPDF() {
                 fontName: item.fontName,
                 fontFamily: fontFamily,
                 fontWeight: fontWeight,
+                fontStyle: fontStyle,
                 scale: viewport.scale,
-                originalWidth: originalWidth
+                originalWidth: originalWidth,
+                bgColor: bgColor
             };
 
             textItems.push(textItemData);
@@ -286,6 +367,31 @@ function makeEditable(textItem) {
 }
 
 // ============================================
+// Decompress zlib data using browser DecompressionStream
+// ============================================
+async function decompressZlib(compressedBytes) {
+    const ds = new DecompressionStream('deflate');
+    const writer = ds.writable.getWriter();
+    writer.write(compressedBytes);
+    writer.close();
+    const reader = ds.readable.getReader();
+    const chunks = [];
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+    }
+    const totalLen = chunks.reduce((sum, c) => sum + c.length, 0);
+    const result = new Uint8Array(totalLen);
+    let offset = 0;
+    for (const chunk of chunks) {
+        result.set(chunk, offset);
+        offset += chunk.length;
+    }
+    return result;
+}
+
+// ============================================
 // Save modified PDF
 // ============================================
 saveBtn.addEventListener('click', async () => {
@@ -296,6 +402,9 @@ saveBtn.addEventListener('click', async () => {
         }
 
         const pdfLibDoc = await PDFLib.PDFDocument.load(pdfBytes);
+        if (typeof fontkit !== 'undefined') {
+            pdfLibDoc.registerFontkit(fontkit);
+        }
         const pages = pdfLibDoc.getPages();
 
         const pageTexts = {};
@@ -308,54 +417,224 @@ saveBtn.addEventListener('click', async () => {
             }
         });
 
-        const helvetica = await pdfLibDoc.embedFont(PDFLib.StandardFonts.Helvetica);
-        const helveticaBold = await pdfLibDoc.embedFont(PDFLib.StandardFonts.HelveticaBold);
-        const timesRoman = await pdfLibDoc.embedFont(PDFLib.StandardFonts.TimesRoman);
-        const timesRomanBold = await pdfLibDoc.embedFont(PDFLib.StandardFonts.TimesRomanBold);
-        const courier = await pdfLibDoc.embedFont(PDFLib.StandardFonts.Courier);
-        const courierBold = await pdfLibDoc.embedFont(PDFLib.StandardFonts.CourierBold);
+        // Parse ToUnicode CMap and get font resource info.
+        // Builds a reverse mapping: Unicode codepoint -> glyph code (hex string)
+        const fontInfoCache = {};
+
+        async function getFontInfo(pageObj, pdjsFontName) {
+            if (fontInfoCache[pdjsFontName] !== undefined) return fontInfoCache[pdjsFontName];
+
+            try {
+                const resources = pageObj.node.Resources();
+                if (!resources) throw new Error('no resources');
+                const fontDictObj = resources.get(PDFLib.PDFName.of('Font'));
+                if (!fontDictObj) throw new Error('no font dict');
+                const fontDict = fontDictObj instanceof PDFLib.PDFDict
+                    ? fontDictObj : pdfLibDoc.context.lookup(fontDictObj);
+                if (!fontDict) throw new Error('cannot resolve font dict');
+
+                const fontNames = [];
+                fontDict.entries().forEach(([key]) => {
+                    fontNames.push(key.decodeText ? key.decodeText() : key.toString().replace('/', ''));
+                });
+
+                const indexMatch = pdjsFontName.match(/f(\d+)$/);
+                if (!indexMatch) throw new Error('cannot parse font index');
+                const fontIndex = parseInt(indexMatch[1]) - 1;
+                if (fontIndex >= fontNames.length) throw new Error('font index out of range');
+
+                const pdfFontName = fontNames[fontIndex];
+                const fontRef = fontDict.get(PDFLib.PDFName.of(pdfFontName));
+                const fontObj = fontRef instanceof PDFLib.PDFDict
+                    ? fontRef : pdfLibDoc.context.lookup(fontRef);
+                if (!fontObj) throw new Error('cannot resolve font');
+
+                // Parse the ToUnicode CMap to build reverse mapping
+                const toUnicodeRef = fontObj.get(PDFLib.PDFName.of('ToUnicode'));
+                if (!toUnicodeRef) throw new Error('no ToUnicode CMap');
+
+                const toUnicodeStream = pdfLibDoc.context.lookup(toUnicodeRef) || toUnicodeRef;
+                if (!toUnicodeStream) throw new Error('cannot resolve ToUnicode');
+
+                // Get CMap data — try decompressed first, then raw
+                let cmapBytes;
+                if (toUnicodeStream.decodeContents) {
+                    cmapBytes = toUnicodeStream.decodeContents();
+                } else if (toUnicodeStream.getUnencodedContents) {
+                    cmapBytes = toUnicodeStream.getUnencodedContents();
+                } else if (toUnicodeStream.getContents) {
+                    cmapBytes = toUnicodeStream.getContents();
+                } else {
+                    cmapBytes = toUnicodeStream.contents;
+                }
+
+                if (!cmapBytes) throw new Error('empty CMap');
+
+                // Decompress if still zlib compressed
+                if (cmapBytes[0] === 0x78) {
+                    cmapBytes = await decompressZlib(cmapBytes);
+                }
+
+                const cmapText = new TextDecoder('latin1').decode(cmapBytes);
+
+                const unicodeToGlyph = {};
+                let match;
+
+                // Parse bfchar: <glyphCode> <unicodeValue>
+                const bfcharRegex = /beginbfchar\s*([\s\S]*?)endbfchar/g;
+                while ((match = bfcharRegex.exec(cmapText)) !== null) {
+                    const lineRegex = /<([0-9a-fA-F]+)>\s*<([0-9a-fA-F]+)>/g;
+                    let lineMatch;
+                    while ((lineMatch = lineRegex.exec(match[1])) !== null) {
+                        const glyphCode = lineMatch[1].toUpperCase();
+                        const unicodeVal = parseInt(lineMatch[2], 16);
+                        unicodeToGlyph[unicodeVal] = glyphCode;
+                    }
+                }
+
+                // Parse bfrange: <startGlyph> <endGlyph> <startUnicode>
+                const bfrangeRegex = /beginbfrange\s*([\s\S]*?)endbfrange/g;
+                while ((match = bfrangeRegex.exec(cmapText)) !== null) {
+                    const lineRegex = /<([0-9a-fA-F]+)>\s*<([0-9a-fA-F]+)>\s*<([0-9a-fA-F]+)>/g;
+                    let lineMatch;
+                    while ((lineMatch = lineRegex.exec(match[1])) !== null) {
+                        const startGlyph = parseInt(lineMatch[1], 16);
+                        const endGlyph = parseInt(lineMatch[2], 16);
+                        const startUnicode = parseInt(lineMatch[3], 16);
+                        const codeLen = lineMatch[1].length;
+                        for (let g = startGlyph; g <= endGlyph; g++) {
+                            unicodeToGlyph[startUnicode + (g - startGlyph)] =
+                                g.toString(16).padStart(codeLen, '0').toUpperCase();
+                        }
+                    }
+                }
+
+                const result = { pdfFontName, unicodeToGlyph };
+                fontInfoCache[pdjsFontName] = result;
+                return result;
+            } catch (e) {
+                fontInfoCache[pdjsFontName] = null;
+                return null;
+            }
+        }
+
+        // Fallback standard fonts
+        const fonts = {
+            helvetica: await pdfLibDoc.embedFont(PDFLib.StandardFonts.Helvetica),
+            helveticaBold: await pdfLibDoc.embedFont(PDFLib.StandardFonts.HelveticaBold),
+            helveticaOblique: await pdfLibDoc.embedFont(PDFLib.StandardFonts.HelveticaOblique),
+            helveticaBoldOblique: await pdfLibDoc.embedFont(PDFLib.StandardFonts.HelveticaBoldOblique),
+            timesRoman: await pdfLibDoc.embedFont(PDFLib.StandardFonts.TimesRoman),
+            timesRomanBold: await pdfLibDoc.embedFont(PDFLib.StandardFonts.TimesRomanBold),
+            timesRomanItalic: await pdfLibDoc.embedFont(PDFLib.StandardFonts.TimesRomanItalic),
+            timesRomanBoldItalic: await pdfLibDoc.embedFont(PDFLib.StandardFonts.TimesRomanBoldItalic),
+            courier: await pdfLibDoc.embedFont(PDFLib.StandardFonts.Courier),
+            courierBold: await pdfLibDoc.embedFont(PDFLib.StandardFonts.CourierBold),
+            courierOblique: await pdfLibDoc.embedFont(PDFLib.StandardFonts.CourierOblique),
+            courierBoldOblique: await pdfLibDoc.embedFont(PDFLib.StandardFonts.CourierBoldOblique),
+        };
+
+        function getFallbackFont(item) {
+            const isBold = item.fontWeight === '700';
+            const isItalic = item.fontStyle === 'italic';
+
+            if (item.fontFamily && item.fontFamily.includes('Times')) {
+                if (isBold && isItalic) return fonts.timesRomanBoldItalic;
+                if (isBold) return fonts.timesRomanBold;
+                if (isItalic) return fonts.timesRomanItalic;
+                return fonts.timesRoman;
+            } else if (item.fontFamily && item.fontFamily.includes('Courier')) {
+                if (isBold && isItalic) return fonts.courierBoldOblique;
+                if (isBold) return fonts.courierBold;
+                if (isItalic) return fonts.courierOblique;
+                return fonts.courier;
+            } else {
+                if (isBold && isItalic) return fonts.helveticaBoldOblique;
+                if (isBold) return fonts.helveticaBold;
+                if (isItalic) return fonts.helveticaOblique;
+                return fonts.helvetica;
+            }
+        }
 
         for (const [pageNum, items] of Object.entries(pageTexts)) {
             const page = pages[parseInt(pageNum) - 1];
 
-            items.forEach(item => {
+            // Collect all unique characters needed across all modified items on this page,
+            // grouped by font, so we know which characters the subset font must support
+            const charsByFont = {};
+            for (const item of items) {
+                const cleanText = item.currentText.replace(/[\r\n]/g, ' ');
+                if (!charsByFont[item.fontName]) charsByFont[item.fontName] = new Set();
+                for (const ch of cleanText) charsByFont[item.fontName].add(ch);
+            }
+
+            for (const item of items) {
                 const x = item.transform[4];
                 const y = item.transform[5];
                 const fontSize = Math.sqrt(item.transform[0] * item.transform[0] + item.transform[1] * item.transform[1]);
 
-                let font = helvetica;
-
-                if (item.fontFamily && item.fontFamily.includes('Times')) {
-                    font = item.fontWeight === '700' ? timesRomanBold : timesRoman;
-                } else if (item.fontFamily && item.fontFamily.includes('Courier')) {
-                    font = item.fontWeight === '700' ? courierBold : courier;
-                } else {
-                    font = item.fontWeight === '700' ? helveticaBold : helvetica;
-                }
-
                 const cleanCurrentText = item.currentText.replace(/[\r\n]/g, ' ');
 
-                // Use the original width from pdf.js (already in PDF units)
+                // Use fallback font for width measurement
+                const fallbackFont = getFallbackFont(item);
                 const originalPdfWidth = item.width;
-                const newTextWidth = font.widthOfTextAtSize(cleanCurrentText, fontSize);
+                const newTextWidth = fallbackFont.widthOfTextAtSize(cleanCurrentText, fontSize);
                 const coverWidth = Math.max(originalPdfWidth, newTextWidth) + 6;
 
+                // Draw background rectangle to cover original text
+                const bg = item.bgColor || { r: 1, g: 1, b: 1 };
                 page.drawRectangle({
                     x: x - 2,
                     y: y - (fontSize * 0.3),
                     width: coverWidth,
                     height: fontSize * 1.4,
-                    color: PDFLib.rgb(1, 1, 1),
+                    color: PDFLib.rgb(bg.r, bg.g, bg.b),
                 });
 
-                page.drawText(cleanCurrentText, {
-                    x: x,
-                    y: y,
-                    size: fontSize,
-                    font: font,
-                    color: PDFLib.rgb(0, 0, 0),
-                });
-            });
+                // Try to use the original font via raw content stream with CMap encoding
+                const fontInfo = await getFontInfo(page, item.fontName);
+                let usedOriginalFont = false;
+
+                if (fontInfo) {
+                    // Check if all characters can be encoded with this font's CMap
+                    const hexChars = [];
+                    let allMapped = true;
+                    for (const ch of cleanCurrentText) {
+                        const code = ch.codePointAt(0);
+                        const glyph = fontInfo.unicodeToGlyph[code];
+                        if (glyph) {
+                            hexChars.push(glyph);
+                        } else {
+                            allMapped = false;
+                            break;
+                        }
+                    }
+
+                    if (allMapped && hexChars.length > 0) {
+                        const hexString = hexChars.join('');
+                        const streamContent =
+                            `q\nBT\n/${fontInfo.pdfFontName} ${fontSize} Tf\n${x} ${y} Td\n<${hexString}> Tj\nET\nQ\n`;
+
+                        const encoder = new TextEncoder();
+                        const streamBytes = encoder.encode(streamContent);
+                        const stream = pdfLibDoc.context.stream(streamBytes);
+                        const streamRef = pdfLibDoc.context.register(stream);
+                        page.node.addContentStream(streamRef);
+
+                        usedOriginalFont = true;
+                    }
+                }
+
+                if (!usedOriginalFont) {
+                    page.drawText(cleanCurrentText, {
+                        x: x,
+                        y: y,
+                        size: fontSize,
+                        font: fallbackFont,
+                        color: PDFLib.rgb(0, 0, 0),
+                    });
+                }
+            }
         }
 
         const modifiedPdfBytes = await pdfLibDoc.save();

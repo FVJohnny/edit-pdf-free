@@ -629,13 +629,13 @@ body.drag-over-page::after {
 
 .editable-text:hover {
     color: black;
-    background-color: white;
+    background-color: var(--bg-color, white);
     box-shadow: 0 0 0 2px rgba(232, 68, 68, 0.4);
 }
 
 .editable-text.modified {
     color: black;
-    background: white;
+    background: var(--bg-color, white);
     outline: 1px solid rgba(60, 176, 67, 0.5);
     display: inline-block;
 }
@@ -646,7 +646,7 @@ body.drag-over-page::after {
 
 .editable-text.editing {
     color: black !important;
-    background: white;
+    background: var(--bg-color, white);
     outline: 2px solid var(--accent);
     z-index: 1000;
     user-select: text;
