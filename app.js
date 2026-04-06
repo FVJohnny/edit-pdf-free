@@ -9,33 +9,114 @@ let originalFileName = '';
 const pdfInput = document.getElementById('pdfInput');
 const saveBtn = document.getElementById('saveBtn');
 const pdfViewer = document.getElementById('pdfViewer');
+const uploadZone = document.getElementById('uploadZone');
+const toolbar = document.getElementById('toolbar');
+const fileNameEl = document.getElementById('fileName');
+const newFileBtn = document.getElementById('newFileBtn');
+const placeholder = document.getElementById('placeholder');
 
-// Load PDF file
-pdfInput.addEventListener('change', async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
+// ============================================
+// Scroll-triggered animations
+// ============================================
+const animateElements = document.querySelectorAll('[data-animate]');
 
-    try {
-        // Store the original filename (remove .pdf extension if present)
-        originalFileName = file.name.replace(/\.pdf$/i, '');
+const observer = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+        if (entry.isIntersecting) {
+            entry.target.classList.add('visible');
+            observer.unobserve(entry.target);
+        }
+    });
+}, { threshold: 0.1, rootMargin: '0px 0px -40px 0px' });
 
-        const arrayBuffer = await file.arrayBuffer();
-        // Store as Uint8Array to prevent detachment
-        pdfBytes = new Uint8Array(arrayBuffer);
+animateElements.forEach(el => observer.observe(el));
 
-        // Load with PDF.js for viewing
-        const loadingTask = pdfjsLib.getDocument({ data: pdfBytes.slice() });
-        pdfDoc = await loadingTask.promise;
+// ============================================
+// Drag and drop (full page)
+// ============================================
+let dragCounter = 0;
 
-        await renderPDF();
-        saveBtn.disabled = false;
-    } catch (error) {
-        console.error('Error loading PDF:', error);
-        alert('Error loading PDF file');
+document.addEventListener('dragover', (e) => {
+    e.preventDefault();
+});
+
+document.addEventListener('dragenter', (e) => {
+    e.preventDefault();
+    dragCounter++;
+    document.body.classList.add('drag-over-page');
+});
+
+document.addEventListener('dragleave', (e) => {
+    e.preventDefault();
+    dragCounter--;
+    if (dragCounter === 0) {
+        document.body.classList.remove('drag-over-page');
     }
 });
 
+document.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dragCounter = 0;
+    document.body.classList.remove('drag-over-page');
+    const file = e.dataTransfer.files[0];
+    if (file && file.type === 'application/pdf') {
+        loadPDF(file);
+        document.getElementById('editor').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } else if (file) {
+        showToast("This is a PDF editor. What part of that was unclear?");
+    }
+});
+
+// ============================================
+// File input
+// ============================================
+pdfInput.addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    loadPDF(file);
+});
+
+// Open new file button
+newFileBtn.addEventListener('click', () => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.pdf';
+    input.onchange = (e) => {
+        const file = e.target.files[0];
+        if (file) loadPDF(file);
+    };
+    input.click();
+});
+
+// ============================================
+// Load PDF
+// ============================================
+async function loadPDF(file) {
+    try {
+        originalFileName = file.name.replace(/\.pdf$/i, '');
+
+        const arrayBuffer = await file.arrayBuffer();
+        pdfBytes = new Uint8Array(arrayBuffer);
+
+        const loadingTask = pdfjsLib.getDocument({ data: pdfBytes.slice() });
+        pdfDoc = await loadingTask.promise;
+
+        // Update UI
+        uploadZone.classList.add('hidden');
+        toolbar.classList.add('visible');
+        fileNameEl.textContent = file.name;
+        saveBtn.disabled = false;
+
+        await renderPDF();
+    } catch (error) {
+        console.error('Error loading PDF:', error);
+        alert('Error loading PDF file. Please try another file.');
+    }
+}
+
+// ============================================
 // Render PDF pages
+// ============================================
 async function renderPDF() {
     pdfViewer.innerHTML = '';
     textItems = [];
@@ -44,14 +125,12 @@ async function renderPDF() {
         const page = await pdfDoc.getPage(pageNum);
         const viewport = page.getViewport({ scale: 1.5 });
 
-        // Create canvas for page
         const canvas = document.createElement('canvas');
         const context = canvas.getContext('2d');
         canvas.height = viewport.height;
         canvas.width = viewport.width;
         canvas.className = 'pdf-page';
 
-        // Render page (this renders everything including text as graphics)
         const renderContext = {
             canvasContext: context,
             viewport: viewport
@@ -59,10 +138,9 @@ async function renderPDF() {
 
         await page.render(renderContext).promise;
 
-        // Get text content first
         const textContent = await page.getTextContent();
 
-        // Cover the rendered text with white rectangles
+        // Cover rendered text with white rectangles
         textContent.items.forEach(item => {
             const tx = pdfjsLib.Util.transform(viewport.transform, item.transform);
             const x = tx[4];
@@ -74,14 +152,12 @@ async function renderPDF() {
             context.fillRect(x - 1, y - 1, width + 2, height + 3);
         });
 
-        // Create container for this page
         const pageContainer = document.createElement('div');
         pageContainer.style.position = 'relative';
         pageContainer.style.marginBottom = '20px';
 
         pageContainer.appendChild(canvas);
 
-        // Create custom editable text layer
         const textLayerDiv = document.createElement('div');
         textLayerDiv.className = 'custom-text-layer';
         textLayerDiv.style.position = 'absolute';
@@ -91,7 +167,6 @@ async function renderPDF() {
         textLayerDiv.style.height = viewport.height + 'px';
         textLayerDiv.style.pointerEvents = 'none';
 
-        // Render text items with precise positioning
         textContent.items.forEach((item, index) => {
             const tx = pdfjsLib.Util.transform(viewport.transform, item.transform);
 
@@ -102,11 +177,9 @@ async function renderPDF() {
             span.style.left = tx[4] + 'px';
             span.style.top = (tx[5] - item.height) + 'px';
 
-            // Get font size from transform
             const fontSize = Math.sqrt(item.transform[0] * item.transform[0] + item.transform[1] * item.transform[1]);
             span.style.fontSize = fontSize + 'px';
 
-            // Map PDF fonts to web fonts
             let fontFamily = 'Arial, Helvetica, sans-serif';
             let fontWeight = '400';
             const fontName = item.fontName.toLowerCase();
@@ -119,7 +192,6 @@ async function renderPDF() {
                 fontFamily = 'Arial, Helvetica, sans-serif';
             }
 
-            // Detect font weight
             if (fontName.includes('bold')) {
                 fontWeight = '700';
             } else if (fontName.includes('light')) {
@@ -128,7 +200,6 @@ async function renderPDF() {
                 fontWeight = '500';
             }
 
-            // Detect font style
             if (fontName.includes('italic') || fontName.includes('oblique')) {
                 span.style.fontStyle = 'italic';
             }
@@ -137,9 +208,7 @@ async function renderPDF() {
             span.style.fontWeight = fontWeight;
             span.style.transformOrigin = 'left bottom';
             span.style.pointerEvents = 'auto';
-
-            // Fine-tune rendering for better matching
-            span.style.letterSpacing = '-0.02em';  // Slightly tighter tracking
+            span.style.letterSpacing = '-0.02em';
             span.style.textRendering = 'geometricPrecision';
             span.style.webkitFontSmoothing = 'antialiased';
             span.style.mozOsxFontSmoothing = 'grayscale';
@@ -159,14 +228,8 @@ async function renderPDF() {
                 scale: viewport.scale
             };
 
-            // Log font info for debugging
-            if (index === 0) {
-                console.log('Font used:', item.fontName, 'Family:', fontFamily, 'Weight:', fontWeight);
-            }
-
             textItems.push(textItemData);
 
-            // Make text editable on click
             span.addEventListener('click', (e) => {
                 e.stopPropagation();
                 makeEditable(textItemData);
@@ -180,30 +243,27 @@ async function renderPDF() {
     }
 }
 
+// ============================================
 // Make text editable inline
+// ============================================
 function makeEditable(textItem) {
-    // If already editing, return
     if (textItem.element.contentEditable === 'true') return;
 
-    // Disable editing on other items
     document.querySelectorAll('.text-item').forEach(el => {
         el.contentEditable = false;
         el.classList.remove('editing');
     });
 
-    // Make this item editable
     textItem.element.contentEditable = true;
     textItem.element.classList.add('editing');
     textItem.element.focus();
 
-    // Select all text
     const range = document.createRange();
     range.selectNodeContents(textItem.element);
     const selection = window.getSelection();
     selection.removeAllRanges();
     selection.addRange(range);
 
-    // Update text on blur or Enter key
     const finishEditing = () => {
         textItem.element.contentEditable = false;
         textItem.element.classList.remove('editing');
@@ -224,20 +284,19 @@ function makeEditable(textItem) {
     }, { once: true });
 }
 
+// ============================================
 // Save modified PDF
+// ============================================
 saveBtn.addEventListener('click', async () => {
     try {
-        // Check if PDFLib is loaded
         if (typeof PDFLib === 'undefined') {
             alert('PDF library is still loading. Please wait a moment and try again.');
             return;
         }
 
-        // Load PDF with pdf-lib for editing
         const pdfLibDoc = await PDFLib.PDFDocument.load(pdfBytes);
         const pages = pdfLibDoc.getPages();
 
-        // Group text items by page
         const pageTexts = {};
         textItems.forEach(item => {
             if (!pageTexts[item.pageNum]) {
@@ -248,72 +307,42 @@ saveBtn.addEventListener('click', async () => {
             }
         });
 
-        // Embed fonts once
         const helvetica = await pdfLibDoc.embedFont(PDFLib.StandardFonts.Helvetica);
         const helveticaBold = await pdfLibDoc.embedFont(PDFLib.StandardFonts.HelveticaBold);
-        const helveticaOblique = await pdfLibDoc.embedFont(PDFLib.StandardFonts.HelveticaOblique);
-        const helveticaBoldOblique = await pdfLibDoc.embedFont(PDFLib.StandardFonts.HelveticaBoldOblique);
         const timesRoman = await pdfLibDoc.embedFont(PDFLib.StandardFonts.TimesRoman);
         const timesRomanBold = await pdfLibDoc.embedFont(PDFLib.StandardFonts.TimesRomanBold);
-        const timesRomanItalic = await pdfLibDoc.embedFont(PDFLib.StandardFonts.TimesRomanItalic);
-        const timesRomanBoldItalic = await pdfLibDoc.embedFont(PDFLib.StandardFonts.TimesRomanBoldItalic);
         const courier = await pdfLibDoc.embedFont(PDFLib.StandardFonts.Courier);
         const courierBold = await pdfLibDoc.embedFont(PDFLib.StandardFonts.CourierBold);
-        const courierOblique = await pdfLibDoc.embedFont(PDFLib.StandardFonts.CourierOblique);
-        const courierBoldOblique = await pdfLibDoc.embedFont(PDFLib.StandardFonts.CourierBoldOblique);
 
-        // Apply text changes to each page
         for (const [pageNum, items] of Object.entries(pageTexts)) {
             const page = pages[parseInt(pageNum) - 1];
-            const { height } = page.getSize();
 
             items.forEach(item => {
-                // Get the actual PDF coordinates
                 const x = item.transform[4];
                 const y = item.transform[5];
                 const fontSize = item.transform[0];
 
-                // Try to match font based on stored fontFamily and fontWeight
                 let font = helvetica;
 
-                // Use the font family we detected during rendering
                 if (item.fontFamily && item.fontFamily.includes('Times')) {
-                    if (item.fontWeight === '700') {
-                        font = timesRomanBold;
-                    } else {
-                        font = timesRoman;
-                    }
+                    font = item.fontWeight === '700' ? timesRomanBold : timesRoman;
                 } else if (item.fontFamily && item.fontFamily.includes('Courier')) {
-                    if (item.fontWeight === '700') {
-                        font = courierBold;
-                    } else {
-                        font = courier;
-                    }
+                    font = item.fontWeight === '700' ? courierBold : courier;
                 } else {
-                    // Default to Helvetica - try to match the look of custom fonts
-                    // For custom fonts, use regular Helvetica which tends to match better
-                    font = helvetica;
+                    font = item.fontWeight === '700' ? helveticaBold : helvetica;
                 }
 
-                // Remove newlines and special characters that can't be encoded
                 const cleanOriginalText = item.originalText.replace(/[\r\n]/g, ' ');
                 const cleanCurrentText = item.currentText.replace(/[\r\n]/g, ' ');
 
-                // Adjust font size to compensate for font metrics differences
-                // Custom fonts often have different metrics than standard fonts
                 let adjustedFontSize = fontSize;
-
-                // For custom fonts (g_d0_*), Helvetica tends to render slightly larger
-                // Reduce size by about 3-5% to better match
                 if (item.fontName && item.fontName.startsWith('g_d0_')) {
                     adjustedFontSize = fontSize * 0.97;
                 }
 
-                // Calculate text width for covering old text
                 const oldTextWidth = font.widthOfTextAtSize(cleanOriginalText, adjustedFontSize);
                 const newTextWidth = font.widthOfTextAtSize(cleanCurrentText, adjustedFontSize);
 
-                // Draw white rectangle to cover old text with better coverage
                 page.drawRectangle({
                     x: x - 1,
                     y: y - 2,
@@ -322,7 +351,6 @@ saveBtn.addEventListener('click', async () => {
                     color: PDFLib.rgb(1, 1, 1),
                 });
 
-                // Draw new text at the same position with adjusted settings
                 page.drawText(cleanCurrentText, {
                     x: x,
                     y: y,
@@ -334,22 +362,15 @@ saveBtn.addEventListener('click', async () => {
             });
         }
 
-        // Save the PDF
         const modifiedPdfBytes = await pdfLibDoc.save();
 
-        // Ask user for filename
         const defaultFilename = originalFileName || 'edited-document';
-        const fileName = prompt('Enter filename (without .pdf extension):', defaultFilename);
+        const fileName = await showPrompt('Save as', 'Enter filename (without .pdf extension)', defaultFilename);
 
-        // If user cancelled, don't save
-        if (fileName === null) {
-            return;
-        }
+        if (fileName === null) return;
 
-        // Use provided filename or default
         const finalFilename = (fileName.trim() || defaultFilename) + '.pdf';
 
-        // Download the file
         const blob = new Blob([modifiedPdfBytes], { type: 'application/pdf' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
@@ -358,9 +379,83 @@ saveBtn.addEventListener('click', async () => {
         a.click();
         URL.revokeObjectURL(url);
 
-        alert('PDF saved successfully as ' + finalFilename);
+        showToast('Saved as ' + finalFilename);
     } catch (error) {
         console.error('Error saving PDF:', error);
-        alert('Error saving PDF file');
+        showToast('Error saving PDF. Please try again.');
     }
+});
+
+// ============================================
+// Toast notification
+// ============================================
+function showToast(message) {
+    const toast = document.createElement('div');
+    toast.className = 'toast';
+    toast.textContent = message;
+    document.body.appendChild(toast);
+    requestAnimationFrame(() => toast.classList.add('visible'));
+    setTimeout(() => {
+        toast.classList.remove('visible');
+        setTimeout(() => toast.remove(), 300);
+    }, 3000);
+}
+
+// ============================================
+// Custom prompt modal
+// ============================================
+function showPrompt(title, label, defaultValue) {
+    return new Promise((resolve) => {
+        const overlay = document.createElement('div');
+        overlay.className = 'modal-overlay';
+
+        overlay.innerHTML = `
+            <div class="modal">
+                <h3 class="modal-title">${title}</h3>
+                <label class="modal-label">${label}</label>
+                <div class="modal-input-row">
+                    <input type="text" class="modal-input" value="${defaultValue}" />
+                    <span class="modal-ext">.pdf</span>
+                </div>
+                <div class="modal-actions">
+                    <button class="modal-btn modal-btn--cancel">Cancel</button>
+                    <button class="modal-btn modal-btn--confirm">Save</button>
+                </div>
+            </div>
+        `;
+
+        document.body.appendChild(overlay);
+        requestAnimationFrame(() => overlay.classList.add('visible'));
+
+        const input = overlay.querySelector('.modal-input');
+        input.focus();
+        input.select();
+
+        const close = (value) => {
+            overlay.classList.remove('visible');
+            setTimeout(() => overlay.remove(), 300);
+            resolve(value);
+        };
+
+        overlay.querySelector('.modal-btn--cancel').addEventListener('click', () => close(null));
+        overlay.querySelector('.modal-btn--confirm').addEventListener('click', () => close(input.value));
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) close(null); });
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') close(input.value);
+            if (e.key === 'Escape') close(null);
+        });
+    });
+}
+
+// ============================================
+// Smooth scroll for anchor links
+// ============================================
+document.querySelectorAll('a[href^="#"]').forEach(link => {
+    link.addEventListener('click', (e) => {
+        e.preventDefault();
+        const target = document.querySelector(link.getAttribute('href'));
+        if (target) {
+            target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+    });
 });

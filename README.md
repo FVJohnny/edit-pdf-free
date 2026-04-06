@@ -1,6 +1,6 @@
-# PDF Text Editor
+# [editpdffree.com](https://editpdffree.com)
 
-A simple web-based PDF text editor that allows you to edit text content in PDF files.
+A free, browser-based PDF text editor. No subscription, no account, no uploads — everything runs locally in your browser.
 
 ## Features
 
