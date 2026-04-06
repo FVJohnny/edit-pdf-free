@@ -141,7 +141,7 @@ body {
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 120px 24px 80px;
+    padding: 80px 24px 80px;
     overflow: hidden;
 }
 
@@ -258,6 +258,39 @@ body {
     line-height: 1.7;
     margin-bottom: 40px;
     font-weight: 300;
+}
+
+/* Hero Socials */
+.hero-socials {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 20px;
+    margin-bottom: 40px;
+}
+
+.hero-social-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--text-muted);
+    text-decoration: none;
+    font-size: 0.9rem;
+    font-weight: 400;
+    transition: color var(--transition);
+}
+
+.hero-social-link:hover {
+    color: var(--text);
+}
+
+.hero-social-link svg {
+    opacity: 0.7;
+    transition: opacity var(--transition);
+}
+
+.hero-social-link:hover svg {
+    opacity: 1;
 }
 
 .hero-actions {
@@ -586,15 +619,29 @@ body.drag-over-page::after {
 }
 
 .editable-text {
-    color: black;
+    color: transparent;
     white-space: pre;
     cursor: pointer;
     user-select: none;
-    transition: background-color 0.2s;
+    transition: color 0.15s, background-color 0.15s;
+    box-sizing: content-box;
 }
 
 .editable-text:hover {
-    background-color: rgba(232, 68, 68, 0.25);
+    color: black;
+    background-color: white;
+    box-shadow: 0 0 0 2px rgba(232, 68, 68, 0.4);
+}
+
+.editable-text.modified {
+    color: black;
+    background: white;
+    outline: 1px solid rgba(60, 176, 67, 0.5);
+    display: inline-block;
+}
+
+.editable-text.modified:hover {
+    outline-color: rgba(60, 176, 67, 0.8);
 }
 
 .editable-text.editing {
@@ -603,6 +650,7 @@ body.drag-over-page::after {
     outline: 2px solid var(--accent);
     z-index: 1000;
     user-select: text;
+    display: inline-block;
 }
 
 /* ============================================
