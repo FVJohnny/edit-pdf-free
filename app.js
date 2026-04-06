@@ -420,6 +420,9 @@ async function renderPDF() {
 
                         // Show text with no background (transparent overlay)
                         span.style.color = span.style.getPropertyValue('--text-color') || 'black';
+
+                        // Show format toolbar after move
+                        showFormatToolbar(textItemData);
                     } else {
                         // It was a click, not a drag — edit the text
                         makeEditable(textItemData);
@@ -524,6 +527,14 @@ function applyFormat(textItem) {
 // Prevent toolbar clicks from blurring the editable text
 formatToolbar.addEventListener('mousedown', (e) => {
     e.preventDefault();
+});
+
+// Hide toolbar when clicking outside of it and outside editable text
+document.addEventListener('mousedown', (e) => {
+    if (!activeTextItem) return;
+    if (formatToolbar.contains(e.target)) return;
+    if (activeTextItem.element.contains(e.target)) return;
+    hideFormatToolbar();
 });
 
 fmtBold.addEventListener('click', () => {
