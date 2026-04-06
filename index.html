@@ -116,6 +116,18 @@
         </div>
     </section>
 
+    <!-- Floating text format toolbar -->
+    <div id="formatToolbar" class="format-toolbar" style="display:none;">
+        <button class="fmt-btn" id="fmtBold" title="Bold"><b>B</b></button>
+        <button class="fmt-btn" id="fmtItalic" title="Italic"><i>I</i></button>
+        <span class="fmt-sep"></span>
+        <button class="fmt-btn fmt-btn--sm" id="fmtSizeDown" title="Decrease size">A-</button>
+        <span class="fmt-size" id="fmtSizeLabel">12</span>
+        <button class="fmt-btn fmt-btn--sm" id="fmtSizeUp" title="Increase size">A+</button>
+        <span class="fmt-sep"></span>
+        <input type="color" id="fmtColor" class="fmt-color" title="Text color" value="#000000">
+    </div>
+
     <script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@pdf-lib/fontkit@1.1.1/dist/fontkit.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>

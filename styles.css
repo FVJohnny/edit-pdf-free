@@ -676,6 +676,91 @@ body.drag-over-page::after {
 }
 
 /* ============================================
+   Format Toolbar
+   ============================================ */
+
+.format-toolbar {
+    position: fixed;
+    z-index: 2000;
+    background: #1a1a1a;
+    border: 1px solid #333;
+    border-radius: 8px;
+    padding: 4px 6px;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+    user-select: none;
+}
+
+.fmt-btn {
+    background: none;
+    border: 1px solid transparent;
+    color: #ccc;
+    font-size: 13px;
+    width: 28px;
+    height: 28px;
+    border-radius: 4px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.15s, color 0.15s;
+}
+
+.fmt-btn:hover {
+    background: #333;
+    color: white;
+}
+
+.fmt-btn.active {
+    background: var(--accent);
+    color: white;
+    border-color: var(--accent);
+}
+
+.fmt-btn--sm {
+    font-size: 11px;
+    width: 26px;
+}
+
+.fmt-size {
+    color: #aaa;
+    font-size: 12px;
+    min-width: 28px;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+}
+
+.fmt-sep {
+    width: 1px;
+    height: 18px;
+    background: #333;
+    margin: 0 3px;
+}
+
+.fmt-color {
+    -webkit-appearance: none;
+    appearance: none;
+    border: 1px solid #444;
+    border-radius: 4px;
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    cursor: pointer;
+    background: none;
+}
+
+.fmt-color::-webkit-color-swatch-wrapper {
+    padding: 2px;
+}
+
+.fmt-color::-webkit-color-swatch {
+    border: none;
+    border-radius: 2px;
+}
+
+/* ============================================
    Features Section
    ============================================ */
 
