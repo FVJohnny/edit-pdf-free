@@ -1,0 +1,382 @@
+/* ============================================
+   Editor Section
+   ============================================ */
+
+.editor-section {
+    padding: 80px 24px 120px;
+    background: var(--bg);
+}
+
+.editor-section-inner {
+    max-width: var(--max-width);
+    margin: 0 auto;
+}
+
+.section-header {
+    text-align: center;
+    margin-bottom: 48px;
+}
+
+.section-title {
+    font-family: var(--font-display);
+    font-size: clamp(2rem, 4vw, 3rem);
+    font-weight: 400;
+    margin-bottom: 12px;
+    color: var(--text);
+}
+
+.section-desc {
+    font-size: 1.05rem;
+    color: var(--text-muted);
+    font-weight: 300;
+}
+
+.editor-wrapper {
+    background: var(--bg-raised);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+}
+
+/* Upload Zone */
+.upload-zone {
+    position: relative;
+    padding: 60px 40px;
+    border-bottom: 1px solid var(--border);
+    text-align: center;
+    cursor: pointer;
+    transition: all var(--transition);
+    background: repeating-linear-gradient(
+        -45deg,
+        transparent,
+        transparent 10px,
+        rgba(255, 255, 255, 0.008) 10px,
+        rgba(255, 255, 255, 0.008) 20px
+    );
+}
+
+.upload-zone:hover {
+    background: rgba(232, 68, 68, 0.03);
+}
+
+.upload-zone.drag-over {
+    background: rgba(232, 68, 68, 0.06);
+    border-color: var(--accent);
+}
+
+/* Full-page drag overlay */
+body.drag-over-page::after {
+    content: 'Drop your PDF anywhere';
+    position: fixed;
+    inset: 0;
+    z-index: 10000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(12, 12, 15, 0.85);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    border: 3px dashed var(--accent);
+    margin: 16px;
+    border-radius: var(--radius-lg);
+    font-family: var(--font-display);
+    font-size: 2rem;
+    color: var(--accent);
+    pointer-events: none;
+}
+
+.upload-input {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    cursor: pointer;
+    width: 100%;
+    height: 100%;
+}
+
+.upload-content {
+    pointer-events: none;
+}
+
+.upload-icon {
+    color: var(--text-dim);
+    margin-bottom: 16px;
+    transition: color var(--transition), transform var(--transition);
+}
+
+.upload-zone:hover .upload-icon {
+    color: var(--accent);
+    transform: translateY(-4px);
+}
+
+.upload-text {
+    font-size: 1.05rem;
+    color: var(--text-muted);
+    margin-bottom: 8px;
+}
+
+.upload-text strong {
+    color: var(--text);
+    font-weight: 600;
+}
+
+.upload-hint {
+    font-size: 0.82rem;
+    color: var(--text-dim);
+}
+
+.upload-zone.hidden {
+    display: none;
+}
+
+/* Toolbar */
+.toolbar {
+    display: none;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 20px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+}
+
+.toolbar.visible {
+    display: flex;
+}
+
+.toolbar-left,
+.toolbar-right {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.toolbar-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 14px;
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--text-muted);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-family: var(--font-body);
+    font-size: 0.85rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all var(--transition);
+}
+
+.toolbar-btn:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--text);
+}
+
+.toolbar-btn--save {
+    background: var(--accent);
+    color: white;
+    border-color: var(--accent);
+}
+
+.toolbar-btn--save:hover:not(:disabled) {
+    background: #d63a3a;
+}
+
+.toolbar-btn--save:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.toolbar-filename {
+    font-size: 0.85rem;
+    color: var(--text-dim);
+    font-weight: 400;
+}
+
+/* PDF Container */
+.pdf-container {
+    overflow: hidden;
+}
+
+.pdf-viewer {
+    background: var(--bg-card);
+    overflow-y: auto;
+    max-height: 80vh;
+    min-height: 400px;
+    padding: 24px;
+}
+
+.placeholder {
+    text-align: center;
+    color: var(--text-dim);
+    padding: 100px 20px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+}
+
+.placeholder-icon {
+    color: var(--text-dim);
+    opacity: 0.4;
+    margin-bottom: 8px;
+}
+
+.placeholder p {
+    font-size: 1.1rem;
+    color: var(--text-muted);
+}
+
+.placeholder small {
+    font-size: 0.85rem;
+    color: var(--text-dim);
+}
+
+/* PDF Page rendering */
+.pdf-page {
+    margin-bottom: 20px;
+    border: 1px solid var(--border);
+    background: white;
+    border-radius: 4px;
+}
+
+.editable-text {
+    color: transparent;
+    white-space: pre;
+    cursor: pointer;
+    user-select: none;
+    transition: color 0.15s, background-color 0.15s;
+    box-sizing: content-box;
+}
+
+.editable-text:hover {
+    color: var(--text-color, black);
+    background-color: var(--bg-color, white);
+    box-shadow: 0 0 0 2px rgba(232, 68, 68, 0.4);
+}
+
+.editable-text.modified {
+    color: var(--text-color, black);
+    background: var(--bg-color, white);
+    outline: 1px solid rgba(60, 176, 67, 0.5);
+    display: inline-block;
+}
+
+.editable-text.modified:hover {
+    outline-color: rgba(60, 176, 67, 0.8);
+}
+
+.editable-text.editing {
+    color: var(--text-color, black) !important;
+    background: var(--bg-color, white);
+    outline: 2px solid var(--accent);
+    z-index: 1000;
+    user-select: text;
+    display: inline-block;
+}
+
+.editable-text.moved {
+    color: var(--text-color, black);
+    background: transparent !important;
+    outline: 1px dashed rgba(60, 176, 67, 0.6);
+    display: inline-block;
+}
+
+.editable-text.moved:hover {
+    background: transparent !important;
+    box-shadow: 0 0 0 2px rgba(60, 176, 67, 0.4);
+}
+
+.editable-text.dragging {
+    color: var(--text-color, black) !important;
+    background: transparent !important;
+    outline: 2px dashed var(--accent);
+    z-index: 1001;
+    cursor: grabbing;
+    opacity: 0.85;
+    display: inline-block;
+}
+
+/* ============================================
+   Format Toolbar
+   ============================================ */
+
+.format-toolbar {
+    position: fixed;
+    z-index: 2000;
+    background: #1a1a1a;
+    border: 1px solid #333;
+    border-radius: 8px;
+    padding: 4px 6px;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+    user-select: none;
+}
+
+.fmt-btn {
+    background: none;
+    border: 1px solid transparent;
+    color: #ccc;
+    font-size: 13px;
+    width: 28px;
+    height: 28px;
+    border-radius: 4px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.15s, color 0.15s;
+}
+
+.fmt-btn:hover {
+    background: #333;
+    color: white;
+}
+
+.fmt-btn.active {
+    background: var(--accent);
+    color: white;
+    border-color: var(--accent);
+}
+
+.fmt-btn--sm {
+    font-size: 11px;
+    width: 26px;
+}
+
+.fmt-size {
+    color: #aaa;
+    font-size: 12px;
+    min-width: 28px;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+}
+
+.fmt-sep {
+    width: 1px;
+    height: 18px;
+    background: #333;
+    margin: 0 3px;
+}
+
+.fmt-color {
+    -webkit-appearance: none;
+    appearance: none;
+    border: 1px solid #444;
+    border-radius: 4px;
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    cursor: pointer;
+    background: none;
+}
+
+.fmt-color::-webkit-color-swatch-wrapper {
+    padding: 2px;
+}
+
+.fmt-color::-webkit-color-swatch {
+    border: none;
+    border-radius: 2px;
+}
