@@ -123,13 +123,27 @@ fmtSizeUp.addEventListener('click', () => {
     applyFormat(activeTextItem);
 });
 
+// Track the text item when color picker opens, since the native color dialog
+// causes blur which clears activeTextItem before the color input event fires
+let colorPickerTextItem = null;
+
+fmtColor.addEventListener('click', () => {
+    colorPickerTextItem = activeTextItem;
+});
+
 fmtColor.addEventListener('input', () => {
-    if (!activeTextItem) return;
+    const textItem = activeTextItem || colorPickerTextItem;
+    if (!textItem) return;
     const hex = fmtColor.value;
-    activeTextItem.textColorOverride = {
+    textItem.textColorOverride = {
         r: parseInt(hex.slice(1, 3), 16) / 255,
         g: parseInt(hex.slice(3, 5), 16) / 255,
         b: parseInt(hex.slice(5, 7), 16) / 255
     };
-    applyFormat(activeTextItem);
+    applyFormat(textItem);
+    showFormatToolbar(textItem);
+});
+
+fmtColor.addEventListener('change', () => {
+    colorPickerTextItem = null;
 });
