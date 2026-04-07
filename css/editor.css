@@ -234,6 +234,23 @@ body.drag-over-page::after {
     border-color: var(--accent);
 }
 
+.pdf-tools-btn:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+}
+
+.pdf-tools-btn:disabled:hover {
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--text-muted);
+    border-color: var(--border);
+}
+
+.pdf-tools-sep {
+    width: 1px;
+    height: 20px;
+    background: var(--border);
+}
+
 .pdf-viewer.placement-mode {
     cursor: crosshair;
 }

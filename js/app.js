@@ -2,6 +2,7 @@ import { initDragDrop, showToast } from './ui.js';
 import { renderPDF, setupImageDrag, setupTextDrag } from './renderer.js';
 import { makeEditable } from './editor.js';
 import { savePDF } from './saver.js';
+import { undo, redo, onHistoryChange, clearHistory, recordAction } from './history.js';
 import { MAX_IMPORT_SCALE } from './utils/constants.js';
 
 // PDF.js worker setup
@@ -21,9 +22,37 @@ const toolbar = document.getElementById('toolbar');
 const fileNameEl = document.getElementById('fileName');
 const newFileBtn = document.getElementById('newFileBtn');
 const pdfTools = document.getElementById('pdfTools');
+const undoBtn = document.getElementById('undoBtn');
+const redoBtn = document.getElementById('redoBtn');
 const addTextBtn = document.getElementById('addTextBtn');
 const importImageBtn = document.getElementById('importImageBtn');
 const imageInput = document.getElementById('imageInput');
+
+// ============================================
+// Undo / Redo
+// ============================================
+undoBtn.addEventListener('click', undo);
+redoBtn.addEventListener('click', redo);
+
+onHistoryChange(({ canUndo, canRedo }) => {
+    undoBtn.disabled = !canUndo;
+    redoBtn.disabled = !canRedo;
+});
+
+document.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
+        e.preventDefault();
+        undo();
+    }
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'Z' || (e.key === 'z' && e.shiftKey))) {
+        e.preventDefault();
+        redo();
+    }
+    if ((e.ctrlKey || e.metaKey) && e.key === 'y') {
+        e.preventDefault();
+        redo();
+    }
+});
 
 // ============================================
 // File input
@@ -69,6 +98,7 @@ async function loadPDF(file) {
         fileNameEl.textContent = file.name;
         saveBtn.disabled = false;
 
+        clearHistory();
         await renderPDF(pdfDoc, pdfViewer, textItems, imageItems);
     } catch (error) {
         console.error('Error loading PDF:', error);
@@ -173,6 +203,11 @@ pdfViewer.addEventListener('click', (e) => {
     setupTextDrag(span, textItemData, canvas);
     textLayer.appendChild(span);
 
+    recordAction({
+        undo() { span.style.display = 'none'; textItemData.deleted = true; },
+        redo() { span.style.display = ''; textItemData.deleted = false; },
+    });
+
     // Exit placement mode and immediately make the text editable
     addTextMode = false;
     addTextBtn.classList.remove('active');
@@ -259,6 +294,12 @@ async function importImage(file) {
     imageItems.push(imageItemData);
     setupImageDrag(overlay, imageItemData, canvas);
     textLayer.appendChild(overlay);
+
+    recordAction({
+        undo() { overlay.style.display = 'none'; imageItemData.deleted = true; },
+        redo() { overlay.style.display = ''; imageItemData.deleted = false; },
+    });
+
     showToast('Image imported — drag to position, resize as needed');
 }
 

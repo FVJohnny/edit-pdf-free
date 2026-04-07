@@ -5,6 +5,7 @@ import { createFloatingToolbar } from './utils/floating-toolbar.js';
 import { rgbToHex, hexToRgb, rgbToCss } from './utils/color.js';
 import { coverOriginalText } from './utils/canvas.js';
 import { MIN_FONT_SIZE } from './utils/constants.js';
+import { recordAction } from './history.js';
 
 const formatToolbar = document.getElementById('formatToolbar');
 const fmtBold = document.getElementById('fmtBold');
@@ -67,32 +68,39 @@ function applyFormat(textItem) {
 // ============================================
 // Button handlers
 // ============================================
+/** Record a format property change with undo/redo support. */
+function applyWithUndo(item, prop, newValue) {
+    const oldValue = item[prop];
+    item[prop] = newValue;
+    applyFormat(item);
+    recordAction({
+        undo() { item[prop] = oldValue; applyFormat(item); },
+        redo() { item[prop] = newValue; applyFormat(item); },
+    });
+}
+
 fmtBold.addEventListener('click', () => {
     const item = toolbar.getActiveItem();
     if (!item) return;
-    item.fontWeightOverride = currentWeight(item) === '700' ? '400' : '700';
-    applyFormat(item);
+    applyWithUndo(item, 'fontWeightOverride', currentWeight(item) === '700' ? '400' : '700');
 });
 
 fmtItalic.addEventListener('click', () => {
     const item = toolbar.getActiveItem();
     if (!item) return;
-    item.fontStyleOverride = currentStyle(item) === 'italic' ? 'normal' : 'italic';
-    applyFormat(item);
+    applyWithUndo(item, 'fontStyleOverride', currentStyle(item) === 'italic' ? 'normal' : 'italic');
 });
 
 fmtSizeDown.addEventListener('click', () => {
     const item = toolbar.getActiveItem();
     if (!item) return;
-    item.fontSizeOverride = Math.max(MIN_FONT_SIZE, currentSize(item) - 1);
-    applyFormat(item);
+    applyWithUndo(item, 'fontSizeOverride', Math.max(MIN_FONT_SIZE, currentSize(item) - 1));
 });
 
 fmtSizeUp.addEventListener('click', () => {
     const item = toolbar.getActiveItem();
     if (!item) return;
-    item.fontSizeOverride = currentSize(item) + 1;
-    applyFormat(item);
+    applyWithUndo(item, 'fontSizeOverride', currentSize(item) + 1);
 });
 
 fmtDelete.addEventListener('click', () => {
@@ -105,16 +113,36 @@ fmtDelete.addEventListener('click', () => {
     item.element.contentEditable = false;
     item.element.style.display = 'none';
     toolbar.hide();
+
+    recordAction({
+        undo() {
+            item.deleted = false;
+            item.element.classList.remove('deleted');
+            item.element.classList.add('modified');
+            item.element.style.display = '';
+        },
+        redo() {
+            item.deleted = true;
+            item.element.classList.add('deleted');
+            item.element.classList.remove('modified', 'moved');
+            item.element.style.display = 'none';
+        },
+    });
 });
 
-// Track text item when color picker opens — the native color dialog causes
-// a blur event which clears activeItem before the 'input' event fires.
+// Track text item and original color when color picker opens — the native
+// color dialog causes a blur event which clears activeItem before input fires.
 let colorPickerTextItem = null;
+let colorBeforePicker = null;
 
 fmtColor.addEventListener('click', () => {
     colorPickerTextItem = toolbar.getActiveItem();
+    if (colorPickerTextItem) {
+        colorBeforePicker = colorPickerTextItem.textColorOverride ?? colorPickerTextItem.textColor;
+    }
 });
 
+// Apply color live as the user drags in the picker (no undo recording)
 fmtColor.addEventListener('input', () => {
     const textItem = toolbar.getActiveItem() || colorPickerTextItem;
     if (!textItem) return;
@@ -123,6 +151,17 @@ fmtColor.addEventListener('input', () => {
     showFormatToolbar(textItem);
 });
 
+// Record a single undo action when the picker closes
 fmtColor.addEventListener('change', () => {
+    const textItem = toolbar.getActiveItem() || colorPickerTextItem;
+    if (textItem && colorBeforePicker) {
+        const oldColor = colorBeforePicker;
+        const newColor = hexToRgb(fmtColor.value);
+        recordAction({
+            undo() { textItem.textColorOverride = oldColor; applyFormat(textItem); },
+            redo() { textItem.textColorOverride = newColor; applyFormat(textItem); },
+        });
+    }
     colorPickerTextItem = null;
+    colorBeforePicker = null;
 });

@@ -3,6 +3,7 @@
 // ============================================
 import { createFloatingToolbar } from './utils/floating-toolbar.js';
 import { coverOriginalImage } from './utils/canvas.js';
+import { recordAction } from './history.js';
 
 const imageToolbar = document.getElementById('imageToolbar');
 const imgDeleteBtn = document.getElementById('imgDelete');
@@ -22,6 +23,11 @@ imgDeleteBtn.addEventListener('click', () => {
     img.deleted = true;
     img.element.style.display = 'none';
     toolbar.hide();
+
+    recordAction({
+        undo() { img.deleted = false; img.element.style.display = ''; },
+        redo() { img.deleted = true; img.element.style.display = 'none'; },
+    });
 });
 
 imgDownloadBtn.addEventListener('click', () => {

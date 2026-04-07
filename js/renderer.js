@@ -16,6 +16,7 @@ import { makeEditable } from './editor.js';
 import { sampleBgColor, sampleTextColor, sampleImageBgColor, rgbToCss } from './utils/color.js';
 import { coverOriginalText, captureCanvasRegion } from './utils/canvas.js';
 import { DRAG_THRESHOLD, MIN_RESIZE_PX, MIN_IMAGE_SIZE } from './utils/constants.js';
+import { recordAction } from './history.js';
 
 function clamp(value, min, max) {
     return Math.max(min, Math.min(max, value));
@@ -374,10 +375,31 @@ export function setupImageDrag(overlay, imageItemData, canvas) {
             if (!dragState) return;
 
             if (dragState.hasMoved) {
-                imageItemData.moveOffsetX += parseFloat(overlay.style.left) - dragState.origLeft;
-                imageItemData.moveOffsetY += parseFloat(overlay.style.top) - dragState.origTop;
+                const movedDx = parseFloat(overlay.style.left) - dragState.origLeft;
+                const movedDy = parseFloat(overlay.style.top) - dragState.origTop;
+                imageItemData.moveOffsetX += movedDx;
+                imageItemData.moveOffsetY += movedDy;
                 overlay.classList.remove('dragging');
                 overlay.classList.add('moved');
+
+                const savedOrigLeft = dragState.origLeft;
+                const savedOrigTop = dragState.origTop;
+                const savedNewLeft = parseFloat(overlay.style.left);
+                const savedNewTop = parseFloat(overlay.style.top);
+                recordAction({
+                    undo() {
+                        overlay.style.left = savedOrigLeft + 'px';
+                        overlay.style.top = savedOrigTop + 'px';
+                        imageItemData.moveOffsetX -= movedDx;
+                        imageItemData.moveOffsetY -= movedDy;
+                    },
+                    redo() {
+                        overlay.style.left = savedNewLeft + 'px';
+                        overlay.style.top = savedNewTop + 'px';
+                        imageItemData.moveOffsetX += movedDx;
+                        imageItemData.moveOffsetY += movedDy;
+                    },
+                });
             }
             showImageToolbar(imageItemData);
             dragState = null;
@@ -456,17 +478,52 @@ function startResize(mouseDownEvent, edge, overlay, imageItemData) {
         overlay.style.height = newHeight + 'px';
     };
 
+    const prevResizedWidth = imageItemData.resizedWidth;
+    const prevResizedHeight = imageItemData.resizedHeight;
+    const prevMoveOffsetX = imageItemData.moveOffsetX;
+    const prevMoveOffsetY = imageItemData.moveOffsetY;
+
     const onMouseUp = () => {
         document.removeEventListener('mousemove', onMouseMove);
         document.removeEventListener('mouseup', onMouseUp);
         if (!hasResized) return;
 
-        imageItemData.moveOffsetX += parseFloat(overlay.style.left) - origLeft;
-        imageItemData.moveOffsetY += parseFloat(overlay.style.top) - origTop;
-        imageItemData.resizedWidth = parseFloat(overlay.style.width);
-        imageItemData.resizedHeight = parseFloat(overlay.style.height);
+        const newLeft = parseFloat(overlay.style.left);
+        const newTop = parseFloat(overlay.style.top);
+        const newWidth = parseFloat(overlay.style.width);
+        const newHeight = parseFloat(overlay.style.height);
+
+        imageItemData.moveOffsetX += newLeft - origLeft;
+        imageItemData.moveOffsetY += newTop - origTop;
+        imageItemData.resizedWidth = newWidth;
+        imageItemData.resizedHeight = newHeight;
         overlay.classList.remove('resizing');
         overlay.classList.add('moved');
+
+        const savedMoveX = imageItemData.moveOffsetX;
+        const savedMoveY = imageItemData.moveOffsetY;
+        recordAction({
+            undo() {
+                overlay.style.left = origLeft + 'px';
+                overlay.style.top = origTop + 'px';
+                overlay.style.width = origWidth + 'px';
+                overlay.style.height = origHeight + 'px';
+                imageItemData.moveOffsetX = prevMoveOffsetX;
+                imageItemData.moveOffsetY = prevMoveOffsetY;
+                imageItemData.resizedWidth = prevResizedWidth;
+                imageItemData.resizedHeight = prevResizedHeight;
+            },
+            redo() {
+                overlay.style.left = newLeft + 'px';
+                overlay.style.top = newTop + 'px';
+                overlay.style.width = newWidth + 'px';
+                overlay.style.height = newHeight + 'px';
+                imageItemData.moveOffsetX = savedMoveX;
+                imageItemData.moveOffsetY = savedMoveY;
+                imageItemData.resizedWidth = newWidth;
+                imageItemData.resizedHeight = newHeight;
+            },
+        });
     };
 
     document.addEventListener('mousemove', onMouseMove);
@@ -528,11 +585,32 @@ export function setupTextDrag(span, textItemData, canvas) {
             if (!dragState) return;
 
             if (dragState.hasMoved) {
-                textItemData.moveOffsetX += parseFloat(span.style.left) - dragState.origLeft;
-                textItemData.moveOffsetY += parseFloat(span.style.top) - dragState.origTop;
+                const movedDx = parseFloat(span.style.left) - dragState.origLeft;
+                const movedDy = parseFloat(span.style.top) - dragState.origTop;
+                textItemData.moveOffsetX += movedDx;
+                textItemData.moveOffsetY += movedDy;
                 span.classList.remove('dragging');
                 span.classList.add('modified', 'moved');
                 showFormatToolbar(textItemData);
+
+                const savedOrigLeft = dragState.origLeft;
+                const savedOrigTop = dragState.origTop;
+                const savedNewLeft = parseFloat(span.style.left);
+                const savedNewTop = parseFloat(span.style.top);
+                recordAction({
+                    undo() {
+                        span.style.left = savedOrigLeft + 'px';
+                        span.style.top = savedOrigTop + 'px';
+                        textItemData.moveOffsetX -= movedDx;
+                        textItemData.moveOffsetY -= movedDy;
+                    },
+                    redo() {
+                        span.style.left = savedNewLeft + 'px';
+                        span.style.top = savedNewTop + 'px';
+                        textItemData.moveOffsetX += movedDx;
+                        textItemData.moveOffsetY += movedDy;
+                    },
+                });
             } else {
                 makeEditable(textItemData);
             }

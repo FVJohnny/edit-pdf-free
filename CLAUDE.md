@@ -21,6 +21,7 @@ js/
   toolbar.js            — text format toolbar (bold, italic, size, color, delete)
   image-toolbar.js      — image toolbar (delete, selection highlight)
   editor.js             — inline text editing (contentEditable)
+  history.js            — undo/redo history manager (action stack)
   renderer.js           — PDF rendering, text/image extraction, drag-to-move, resize
   saver.js              — PDF save: text, images, CMap fonts, download
   types.js              — JSDoc type definitions (TextItem, ImageItem, coordinate docs)

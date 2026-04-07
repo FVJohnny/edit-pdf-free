@@ -1,4 +1,5 @@
 import { showFormatToolbar, hideFormatToolbar } from './toolbar.js';
+import { recordAction } from './history.js';
 
 // ============================================
 // Make text editable inline
@@ -24,10 +25,13 @@ export function makeEditable(textItem) {
 
     showFormatToolbar(textItem);
 
+    const textBefore = textItem.currentText;
+
     const finishEditing = () => {
         textItem.element.contentEditable = false;
         textItem.element.classList.remove('editing');
-        textItem.currentText = textItem.element.textContent;
+        const textAfter = textItem.element.textContent;
+        textItem.currentText = textAfter;
         const isMoved = textItem.moveOffsetX !== 0 || textItem.moveOffsetY !== 0;
         const hasOverrides = textItem.fontWeightOverride || textItem.fontStyleOverride ||
                              textItem.fontSizeOverride || textItem.textColorOverride;
@@ -39,6 +43,20 @@ export function makeEditable(textItem) {
             textItem.element.style.minWidth = '';
         }
         hideFormatToolbar();
+
+        // Record undo action if text actually changed
+        if (textAfter !== textBefore) {
+            recordAction({
+                undo() {
+                    textItem.currentText = textBefore;
+                    textItem.element.textContent = textBefore;
+                },
+                redo() {
+                    textItem.currentText = textAfter;
+                    textItem.element.textContent = textAfter;
+                },
+            });
+        }
     };
 
     textItem.element.addEventListener('blur', finishEditing, { once: true });
