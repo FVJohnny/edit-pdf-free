@@ -16,12 +16,16 @@ A free, browser-based PDF text editor at EditPDFFree.com. No signup, no subscrip
 index.html              — landing page + editor section
 styles.css              — CSS imports (delegates to css/ modules)
 js/
-  app.js                — entry point: state, file loading, wiring
+  app.js                — entry point: state, file loading, image import, wiring
   ui.js                 — animations, drag-drop upload, toast, modal, smooth scroll
-  toolbar.js            — format toolbar logic and event handlers
+  toolbar.js            — text format toolbar (bold, italic, size, color, delete)
+  image-toolbar.js      — image toolbar (delete, selection highlight)
   editor.js             — inline text editing (contentEditable)
-  renderer.js           — PDF rendering, text layer, font/color detection, drag-to-move
-  saver.js              — PDF save with CMap parsing, font embedding, cover rects
+  renderer.js           — PDF rendering, text/image extraction, drag-to-move, resize
+  saver.js              — PDF save: text, images, CMap fonts, download
+  utils/
+    color.js            — RGB/hex conversion, color sampling from canvas
+    floating-toolbar.js — shared floating toolbar positioning and dismiss logic
 css/
   base.css              — variables, reset, buttons, animations
   nav.css               — navigation bar

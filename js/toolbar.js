@@ -1,6 +1,9 @@
 // ============================================
-// Format toolbar
+// Text format toolbar
 // ============================================
+import { createFloatingToolbar } from './utils/floating-toolbar.js';
+import { rgbToHex } from './utils/color.js';
+
 const formatToolbar = document.getElementById('formatToolbar');
 const fmtBold = document.getElementById('fmtBold');
 const fmtItalic = document.getElementById('fmtItalic');
@@ -10,42 +13,26 @@ const fmtSizeLabel = document.getElementById('fmtSizeLabel');
 const fmtColor = document.getElementById('fmtColor');
 const fmtDelete = document.getElementById('fmtDelete');
 
-let activeTextItem = null;
+const toolbar = createFloatingToolbar(formatToolbar, {
+    shouldIgnoreTarget: (target) =>
+        target.classList && target.classList.contains('editable-text')
+});
 
 export function getActiveTextItem() {
-    return activeTextItem;
+    return toolbar.getActiveItem();
 }
 
 export function repositionToolbar(textItem) {
-    const rect = textItem.element.getBoundingClientRect();
-    const tbRect = formatToolbar.getBoundingClientRect();
-
-    let left = rect.left + rect.width / 2 - tbRect.width / 2;
-    let top = rect.top - tbRect.height - 8;
-
-    if (left < 8) left = 8;
-    if (left + tbRect.width > window.innerWidth - 8) left = window.innerWidth - tbRect.width - 8;
-    if (top < 8) top = rect.bottom + 8;
-
-    formatToolbar.style.left = left + 'px';
-    formatToolbar.style.top = top + 'px';
+    toolbar.reposition(textItem);
 }
 
 export function showFormatToolbar(textItem) {
-    activeTextItem = textItem;
-
-    // Make visible off-screen first to measure, then position
-    formatToolbar.style.left = '-9999px';
-    formatToolbar.style.top = '-9999px';
-    formatToolbar.style.display = 'flex';
-
-    repositionToolbar(textItem);
+    toolbar.show(textItem);
     updateToolbarState(textItem);
 }
 
 export function hideFormatToolbar() {
-    formatToolbar.style.display = 'none';
-    activeTextItem = null;
+    toolbar.hide();
 }
 
 function updateToolbarState(textItem) {
@@ -57,10 +44,7 @@ function updateToolbarState(textItem) {
     fmtBold.classList.toggle('active', currentWeight === '700');
     fmtItalic.classList.toggle('active', currentStyle === 'italic');
     fmtSizeLabel.textContent = currentSize;
-
-    // Convert rgb 0-1 to hex
-    const toHex = (v) => Math.round(v * 255).toString(16).padStart(2, '0');
-    fmtColor.value = `#${toHex(tc.r)}${toHex(tc.g)}${toHex(tc.b)}`;
+    fmtColor.value = rgbToHex(tc.r, tc.g, tc.b);
 }
 
 function applyFormat(textItem) {
@@ -83,87 +67,71 @@ function applyFormat(textItem) {
     updateToolbarState(textItem);
 }
 
-// Reposition toolbar on scroll so it follows the text
-window.addEventListener('scroll', () => {
-    if (activeTextItem) repositionToolbar(activeTextItem);
-}, true);
-
-// Prevent toolbar clicks from blurring the editable text
-formatToolbar.addEventListener('mousedown', (e) => {
-    e.preventDefault();
-});
-
-// Hide toolbar when clicking outside of it and outside editable text
-document.addEventListener('mousedown', (e) => {
-    if (!activeTextItem) return;
-    if (formatToolbar.contains(e.target)) return;
-    if (e.target.classList && e.target.classList.contains('editable-text')) return;
-    hideFormatToolbar();
-});
-
+// ============================================
+// Button handlers
+// ============================================
 fmtBold.addEventListener('click', () => {
-    if (!activeTextItem) return;
-    const current = activeTextItem.fontWeightOverride ?? activeTextItem.fontWeight;
-    activeTextItem.fontWeightOverride = current === '700' ? '400' : '700';
-    applyFormat(activeTextItem);
+    const item = toolbar.getActiveItem();
+    if (!item) return;
+    const current = item.fontWeightOverride ?? item.fontWeight;
+    item.fontWeightOverride = current === '700' ? '400' : '700';
+    applyFormat(item);
 });
 
 fmtItalic.addEventListener('click', () => {
-    if (!activeTextItem) return;
-    const current = activeTextItem.fontStyleOverride ?? activeTextItem.fontStyle;
-    activeTextItem.fontStyleOverride = current === 'italic' ? 'normal' : 'italic';
-    applyFormat(activeTextItem);
+    const item = toolbar.getActiveItem();
+    if (!item) return;
+    const current = item.fontStyleOverride ?? item.fontStyle;
+    item.fontStyleOverride = current === 'italic' ? 'normal' : 'italic';
+    applyFormat(item);
 });
 
 fmtSizeDown.addEventListener('click', () => {
-    if (!activeTextItem) return;
-    const current = activeTextItem.fontSizeOverride ?? Math.round(parseFloat(activeTextItem.element.style.fontSize));
-    activeTextItem.fontSizeOverride = Math.max(6, current - 1);
-    applyFormat(activeTextItem);
+    const item = toolbar.getActiveItem();
+    if (!item) return;
+    const current = item.fontSizeOverride ?? Math.round(parseFloat(item.element.style.fontSize));
+    item.fontSizeOverride = Math.max(6, current - 1);
+    applyFormat(item);
 });
 
 fmtSizeUp.addEventListener('click', () => {
-    if (!activeTextItem) return;
-    const current = activeTextItem.fontSizeOverride ?? Math.round(parseFloat(activeTextItem.element.style.fontSize));
-    activeTextItem.fontSizeOverride = current + 1;
-    applyFormat(activeTextItem);
+    const item = toolbar.getActiveItem();
+    if (!item) return;
+    const current = item.fontSizeOverride ?? Math.round(parseFloat(item.element.style.fontSize));
+    item.fontSizeOverride = current + 1;
+    applyFormat(item);
 });
 
 fmtDelete.addEventListener('click', () => {
-    if (!activeTextItem) return;
-    // Cover the original position on the canvas
-    if (!activeTextItem.originalCovered && activeTextItem.canvas) {
-        const ctx = activeTextItem.canvas.getContext('2d');
-        const bgR = Math.round(activeTextItem.bgColor.r * 255);
-        const bgG = Math.round(activeTextItem.bgColor.g * 255);
-        const bgB = Math.round(activeTextItem.bgColor.b * 255);
+    const item = toolbar.getActiveItem();
+    if (!item) return;
+    if (!item.originalCovered && item.canvas) {
+        const ctx = item.canvas.getContext('2d');
+        const bgR = Math.round(item.bgColor.r * 255);
+        const bgG = Math.round(item.bgColor.g * 255);
+        const bgB = Math.round(item.bgColor.b * 255);
         ctx.fillStyle = `rgb(${bgR}, ${bgG}, ${bgB})`;
-        const fs = activeTextItem.renderedFontSize;
-        const coverX = activeTextItem.cssLeft;
-        const coverY = activeTextItem.cssTop - fs * 0.4;
-        const coverW = activeTextItem.originalWidth + 8;
-        const coverH = fs * 1.5;
-        ctx.fillRect(coverX, coverY, coverW, coverH);
-        activeTextItem.originalCovered = true;
+        const fs = item.renderedFontSize;
+        ctx.fillRect(item.cssLeft, item.cssTop - fs * 0.4, item.originalWidth + 8, fs * 1.5);
+        item.originalCovered = true;
     }
-    activeTextItem.deleted = true;
-    activeTextItem.element.classList.add('deleted');
-    activeTextItem.element.classList.remove('editing', 'modified', 'moved');
-    activeTextItem.element.contentEditable = false;
-    activeTextItem.element.style.display = 'none';
-    hideFormatToolbar();
+    item.deleted = true;
+    item.element.classList.add('deleted');
+    item.element.classList.remove('editing', 'modified', 'moved');
+    item.element.contentEditable = false;
+    item.element.style.display = 'none';
+    toolbar.hide();
 });
 
-// Track the text item when color picker opens, since the native color dialog
-// causes blur which clears activeTextItem before the color input event fires
+// Track text item when color picker opens (native dialog causes blur)
 let colorPickerTextItem = null;
 
 fmtColor.addEventListener('click', () => {
-    colorPickerTextItem = activeTextItem;
+    colorPickerTextItem = toolbar.getActiveItem();
 });
 
 fmtColor.addEventListener('input', () => {
-    const textItem = activeTextItem || colorPickerTextItem;
+    const textItem = toolbar.getActiveItem() || colorPickerTextItem;
     if (!textItem) return;
     const hex = fmtColor.value;
     textItem.textColorOverride = {
