@@ -264,17 +264,24 @@ function processMovedImages(doc, pages, imageItems) {
 
             if (img.deleted) continue;
 
-            // Redraw at new position/size using a PDF content stream:
-            //   q → save state, cm → set transform matrix, Do → draw XObject, Q → restore
-            const newWidth = img.resizedWidth ? img.resizedWidth / img.scale : pdfWidth;
-            const newHeight = img.resizedHeight ? img.resizedHeight / img.scale : pdfHeight;
-            const newX = pdfX + img.moveOffsetX / img.scale;
-            const newY = pdfY - img.moveOffsetY / img.scale;
+            // Redraw at new position/size using a PDF content stream.
+            // We compute the final position from the current CSS state (original + all offsets)
+            // rather than incrementally, to avoid compounding Y-flip errors with resize.
+            const newPdfWidth = img.resizedWidth ? img.resizedWidth / img.scale : pdfWidth;
+            const newPdfHeight = img.resizedHeight ? img.resizedHeight / img.scale : pdfHeight;
+
+            // Final CSS position = original + accumulated move offset (includes resize shifts)
+            const finalCssLeft = img.cssLeft + img.moveOffsetX;
+            const finalCssTop = img.cssTop + img.moveOffsetY;
+
+            // Convert to PDF coordinates (Y flipped, using the NEW height)
+            const newX = finalCssLeft / img.scale;
+            const newY = pageHeight - (finalCssTop + (img.resizedHeight || img.cssHeight)) / img.scale;
 
             const xObjectName = findImageXObjectName(page, doc, img.imageSeqIndex);
             if (xObjectName) {
                 addContentStream(doc, page,
-                    `q\n${newWidth} 0 0 ${newHeight} ${newX} ${newY} cm\n/${xObjectName} Do\nQ\n`);
+                    `q\n${newPdfWidth} 0 0 ${newPdfHeight} ${newX} ${newY} cm\n/${xObjectName} Do\nQ\n`);
             }
         }
     }
