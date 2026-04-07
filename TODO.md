@@ -5,7 +5,7 @@
 A small toolbar that appears above the PDF once loaded.
 
 - [x] **Import Image** — Add an external image (PNG/JPG) to the pdf
-- [ ] **Add Text** — Insert a new text block
+- [x] **Add Text** — Insert a new text block
 - [ ] **Undo** — Undo the last edit, move, or resize action
 - [ ] **Zoom In / Zoom Out** — Control the PDF view zoom level
 

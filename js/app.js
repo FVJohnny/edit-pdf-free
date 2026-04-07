@@ -1,5 +1,6 @@
 import { initDragDrop, showToast } from './ui.js';
-import { renderPDF, setupImageDrag } from './renderer.js';
+import { renderPDF, setupImageDrag, setupTextDrag } from './renderer.js';
+import { makeEditable } from './editor.js';
 import { savePDF } from './saver.js';
 import { MAX_IMPORT_SCALE } from './utils/constants.js';
 
@@ -20,6 +21,7 @@ const toolbar = document.getElementById('toolbar');
 const fileNameEl = document.getElementById('fileName');
 const newFileBtn = document.getElementById('newFileBtn');
 const pdfTools = document.getElementById('pdfTools');
+const addTextBtn = document.getElementById('addTextBtn');
 const importImageBtn = document.getElementById('importImageBtn');
 const imageInput = document.getElementById('imageInput');
 
@@ -73,6 +75,110 @@ async function loadPDF(file) {
         alert('Error loading PDF file. Please try another file.');
     }
 }
+
+// ============================================
+// Add Text
+// ============================================
+let addTextMode = false;
+
+addTextBtn.addEventListener('click', () => {
+    addTextMode = !addTextMode;
+    addTextBtn.classList.toggle('active', addTextMode);
+    pdfViewer.classList.toggle('placement-mode', addTextMode);
+    if (addTextMode) {
+        showToast('Click on the PDF to place new text');
+    }
+});
+
+pdfViewer.addEventListener('click', (e) => {
+    if (!addTextMode) return;
+
+    // Find which page container was clicked
+    const pageContainers = pdfViewer.querySelectorAll(':scope > div');
+    let targetPage = null;
+    let pageNum = 0;
+    for (let i = 0; i < pageContainers.length; i++) {
+        if (pageContainers[i].contains(e.target)) {
+            targetPage = pageContainers[i];
+            pageNum = i + 1;
+            break;
+        }
+    }
+    if (!targetPage) return;
+
+    const canvas = targetPage.querySelector('canvas');
+    const textLayer = targetPage.querySelector('.custom-text-layer');
+    if (!canvas || !textLayer) return;
+
+    // Convert click position to canvas coordinates
+    const canvasRect = canvas.getBoundingClientRect();
+    const cssLeft = e.clientX - canvasRect.left;
+    const cssTop = e.clientY - canvasRect.top;
+
+    const scale = canvas.width / canvas.getBoundingClientRect().width;
+    const canvasX = cssLeft * scale;
+    const canvasY = cssTop * scale;
+
+    const defaultFontSize = 16;
+    const pdfScale = canvas.width / 612; // approximate viewport.scale (letter width = 612pt)
+
+    const span = document.createElement('span');
+    span.textContent = 'New text';
+    span.className = 'editable-text modified';
+    span.style.position = 'absolute';
+    span.style.left = canvasX + 'px';
+    span.style.top = canvasY + 'px';
+    span.style.fontSize = defaultFontSize + 'px';
+    span.style.lineHeight = '1';
+    span.style.fontFamily = 'Helvetica, Arial, sans-serif';
+    span.style.fontWeight = '400';
+    span.style.transformOrigin = 'left bottom';
+    span.style.pointerEvents = 'auto';
+    span.style.letterSpacing = '-0.02em';
+    span.style.textRendering = 'geometricPrecision';
+    span.style.webkitFontSmoothing = 'antialiased';
+    span.style.mozOsxFontSmoothing = 'grayscale';
+    span.style.setProperty('--bg-color', 'rgb(255, 255, 255)');
+    span.style.setProperty('--text-color', 'rgb(0, 0, 0)');
+
+    /** @type {TextItem} */
+    const textItemData = {
+        element: span,
+        pageNum,
+        originalText: '',
+        currentText: 'New text',
+        index: textItems.length,
+        // Build a transform matrix: [fontSize, 0, 0, fontSize, x, y] in PDF coordinates
+        transform: [defaultFontSize / pdfScale, 0, 0, defaultFontSize / pdfScale, canvasX / pdfScale, (canvas.height - canvasY) / pdfScale],
+        width: 0,
+        height: defaultFontSize / pdfScale,
+        fontName: '',
+        fontFamily: 'Helvetica, Arial, sans-serif',
+        fontWeight: '400',
+        fontStyle: 'normal',
+        scale: pdfScale,
+        originalWidth: 0,
+        bgColor: { r: 1, g: 1, b: 1 },
+        textColor: { r: 0, g: 0, b: 0 },
+        moveOffsetX: 0,
+        moveOffsetY: 0,
+        originalCovered: true, // No original to cover
+        cssLeft: canvasX,
+        cssTop: canvasY,
+        canvas,
+        renderedFontSize: defaultFontSize,
+    };
+
+    textItems.push(textItemData);
+    setupTextDrag(span, textItemData, canvas);
+    textLayer.appendChild(span);
+
+    // Exit placement mode and immediately make the text editable
+    addTextMode = false;
+    addTextBtn.classList.remove('active');
+    pdfViewer.classList.remove('placement-mode');
+    makeEditable(textItemData);
+});
 
 // ============================================
 // Import Image

@@ -478,7 +478,7 @@ function startResize(mouseDownEvent, edge, overlay, imageItemData) {
 // ============================================
 
 /** Set up drag-to-move for a text span. Click without drag enters edit mode. */
-function setupTextDrag(span, textItemData, canvas) {
+export function setupTextDrag(span, textItemData, canvas) {
     let dragState = null;
 
     span.addEventListener('dragstart', (e) => e.preventDefault());

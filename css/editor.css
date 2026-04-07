@@ -228,6 +228,16 @@ body.drag-over-page::after {
     border-color: var(--text-dim);
 }
 
+.pdf-tools-btn.active {
+    background: var(--accent);
+    color: white;
+    border-color: var(--accent);
+}
+
+.pdf-viewer.placement-mode {
+    cursor: crosshair;
+}
+
 .hidden-input {
     display: none;
 }
