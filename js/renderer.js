@@ -294,6 +294,7 @@ async function extractImages(page, viewport, canvas, textLayerDiv, imageItems, p
                 moveOffsetY: 0,
                 originalCovered: false,
                 canvas,
+                imageDataURL,
             };
 
             imageItems.push(imageItemData);

@@ -6,6 +6,7 @@ import { coverOriginalImage } from './utils/canvas.js';
 
 const imageToolbar = document.getElementById('imageToolbar');
 const imgDeleteBtn = document.getElementById('imgDelete');
+const imgDownloadBtn = document.getElementById('imgDownload');
 
 const toolbar = createFloatingToolbar(imageToolbar, {
     shouldIgnoreTarget: (target) =>
@@ -21,6 +22,20 @@ imgDeleteBtn.addEventListener('click', () => {
     img.deleted = true;
     img.element.style.display = 'none';
     toolbar.hide();
+});
+
+imgDownloadBtn.addEventListener('click', () => {
+    const img = toolbar.getActiveItem();
+    if (!img) return;
+
+    // For imported images use their original data URL; for extracted images use the canvas capture
+    const dataURL = img.importedImageDataURL || img.imageDataURL;
+    if (!dataURL) return;
+
+    const a = document.createElement('a');
+    a.href = dataURL;
+    a.download = 'image.' + (dataURL.startsWith('data:image/png') ? 'png' : 'jpg');
+    a.click();
 });
 
 export function showImageToolbar(imageItemData) {

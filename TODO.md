@@ -14,3 +14,4 @@ A small toolbar that appears above the PDF once loaded.
 A floating toolbar that appears when clicking on an image (similar to text format toolbar).
 
 - [x] **Delete Image** — Remove an image from the PDF (trash icon button)
+- [x] **Download Image** — Download the image as a file
