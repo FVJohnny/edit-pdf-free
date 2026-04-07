@@ -8,6 +8,7 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dis
 let pdfDoc = null;
 let pdfBytes = null;
 let textItems = [];
+let imageItems = [];
 let originalFileName = '';
 
 const pdfInput = document.getElementById('pdfInput');
@@ -61,7 +62,7 @@ async function loadPDF(file) {
         fileNameEl.textContent = file.name;
         saveBtn.disabled = false;
 
-        await renderPDF(pdfDoc, pdfViewer, textItems);
+        await renderPDF(pdfDoc, pdfViewer, textItems, imageItems);
     } catch (error) {
         console.error('Error loading PDF:', error);
         alert('Error loading PDF file. Please try another file.');
@@ -72,5 +73,5 @@ async function loadPDF(file) {
 // Save PDF
 // ============================================
 saveBtn.addEventListener('click', () => {
-    savePDF(pdfBytes, textItems, originalFileName);
+    savePDF(pdfBytes, textItems, imageItems, originalFileName);
 });

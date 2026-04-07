@@ -26,9 +26,43 @@ async function decompressZlib(compressedBytes) {
 }
 
 // ============================================
+// Find XObject image name by sequential index
+// ============================================
+function findImageXObjectName(page, pdfLibDoc, seqIndex) {
+    try {
+        const resources = page.node.Resources();
+        if (!resources) return null;
+        const xObjRef = resources.get(PDFLib.PDFName.of('XObject'));
+        if (!xObjRef) return null;
+        const xObjDict = xObjRef instanceof PDFLib.PDFDict
+            ? xObjRef : pdfLibDoc.context.lookup(xObjRef);
+        if (!xObjDict) return null;
+
+        // Collect image XObject names in dict order (filtering out forms/other)
+        const imageNames = [];
+        for (const [name, ref] of xObjDict.entries()) {
+            const nameStr = name.decodeText ? name.decodeText() : name.toString().replace('/', '');
+            const obj = pdfLibDoc.context.lookup(ref);
+            if (obj) {
+                const subtypeRef = obj.dict
+                    ? obj.dict.get(PDFLib.PDFName.of('Subtype'))
+                    : (obj.get ? obj.get(PDFLib.PDFName.of('Subtype')) : null);
+                if (subtypeRef && subtypeRef.toString() === '/Image') {
+                    imageNames.push(nameStr);
+                }
+            }
+        }
+
+        return imageNames[seqIndex] || null;
+    } catch (e) {
+        return null;
+    }
+}
+
+// ============================================
 // Save modified PDF
 // ============================================
-export async function savePDF(pdfBytes, textItems, originalFileName) {
+export async function savePDF(pdfBytes, textItems, imageItems, originalFileName) {
     try {
         if (typeof PDFLib === 'undefined') {
             alert('PDF library is still loading. Please wait a moment and try again.');
@@ -267,6 +301,63 @@ export async function savePDF(pdfBytes, textItems, originalFileName) {
                         font: fallbackFont,
                         color: PDFLib.rgb(tc.r, tc.g, tc.b),
                     });
+                }
+            }
+        }
+
+        // Handle moved/resized images
+        const movedImages = imageItems.filter(img =>
+            img.moveOffsetX !== 0 || img.moveOffsetY !== 0 || img.resizedWidth || img.resizedHeight
+        );
+        const imagesByPage = {};
+        movedImages.forEach(img => {
+            if (!imagesByPage[img.pageNum]) imagesByPage[img.pageNum] = [];
+            imagesByPage[img.pageNum].push(img);
+        });
+
+        for (const [pageNum, items] of Object.entries(imagesByPage)) {
+            const page = pages[parseInt(pageNum) - 1];
+
+            for (const img of items) {
+                // Cover original position with background color rectangle
+                const bg = img.bgColor || { r: 1, g: 1, b: 1 };
+                const pageHeight = page.getHeight();
+
+                // Convert CSS coordinates to PDF coordinates
+                const origX = img.cssLeft / img.scale;
+                const origY = pageHeight - (img.cssTop + img.cssHeight) / img.scale;
+                const pdfW = img.cssWidth / img.scale;
+                const pdfH = img.cssHeight / img.scale;
+
+                page.drawRectangle({
+                    x: origX,
+                    y: origY,
+                    width: pdfW,
+                    height: pdfH,
+                    color: PDFLib.rgb(bg.r, bg.g, bg.b),
+                });
+
+                // Calculate new position and dimensions in PDF coordinates
+                const moveX = img.moveOffsetX / img.scale;
+                const moveY = -img.moveOffsetY / img.scale;
+
+                const newPdfW = img.resizedWidth ? img.resizedWidth / img.scale : pdfW;
+                const newPdfH = img.resizedHeight ? img.resizedHeight / img.scale : pdfH;
+
+                const newX = origX + moveX;
+                const newY = origY + moveY;
+
+                // Find the image XObject name
+                const imgRefName = findImageXObjectName(page, pdfLibDoc, img.imageSeqIndex);
+
+                if (imgRefName) {
+                    const streamContent =
+                        `q\n${newPdfW} 0 0 ${newPdfH} ${newX} ${newY} cm\n/${imgRefName} Do\nQ\n`;
+                    const encoder = new TextEncoder();
+                    const streamBytes = encoder.encode(streamContent);
+                    const stream = pdfLibDoc.context.stream(streamBytes);
+                    const streamRef = pdfLibDoc.context.register(stream);
+                    page.node.addContentStream(streamRef);
                 }
             }
         }

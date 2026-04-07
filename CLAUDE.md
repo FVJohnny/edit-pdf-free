@@ -74,20 +74,30 @@ Use the MCP Chrome tools (`mcp__chrome__*`) to test features in the browser. Lau
    - The format toolbar follows the text during the drag.
    - After dropping, the text stays at the new position with a dashed green outline.
 
-5. **Save PDF** — Click "Save PDF", enter a filename, and confirm. Intercept or download the generated PDF.
+5. **Drag-to-move images** — Drag an image (e.g. the Accelio logo) to a new position. Verify:
+   - Images in the PDF are detected and show a hover highlight (red border) when moused over.
+   - The original position is covered (white/bg-color rect) **immediately when the drag starts**.
+   - The image moves smoothly with the cursor, showing the captured image content.
+   - After dropping, the image stays at the new position with a dashed green outline.
+   - **Resize** — Hover over an image to reveal resize handles (red corner dots, edge cursors). Drag a corner or edge to resize. Verify the image scales and the original position is covered.
+   - **Shift+Resize (aspect ratio lock)** — Hold Shift while dragging any resize handle. Verify the image maintains its original aspect ratio throughout the resize. Test with both corner and edge handles.
 
-6. **Verify saved PDF** — Re-load the saved PDF back into the editor (or open in a new tab). Check:
+6. **Save PDF** — Click "Save PDF", enter a filename, and confirm. Intercept or download the generated PDF.
+
+7. **Verify saved PDF** — Re-load the saved PDF back into the editor (or open in a new tab). Check:
    - **Cover rects** — The original positions of moved/edited text are cleanly covered with the correct background color. The cover rects should NOT bleed over adjacent text or graphics.
    - **New text placement** — Edited and moved texts appear at their expected positions.
    - **Font fidelity** — Text that wasn't changed in style should use the original PDF font (via CMap encoding). Text with style overrides should use the correct fallback font (Helvetica/Times/Courier family).
    - **Font size** — Any size changes are reflected correctly in the saved PDF.
    - **Colors** — Text color overrides are preserved in the saved output.
    - **Bold/Italic** — Style overrides render correctly in the saved PDF.
-   - **Unmodified text** — Text that was NOT edited should be completely unchanged — no artifacts, no cover rects, no font substitution.
+   - **Moved images** — Images that were dragged appear at their new positions in the saved PDF. The original positions are cleanly covered.
+   - **Resized images** — Images that were resized appear at their new dimensions in the saved PDF.
+   - **Unmodified content** — Text and images that were NOT edited should be completely unchanged — no artifacts, no cover rects, no font substitution.
 
 ### Quick smoke test
 
-At minimum, for small changes: edit one text, drag another, change the color of a third, save the PDF, reload it, and verify nothing is broken.
+At minimum, for small changes: edit one text, drag another text, drag an image, change the color of a third text, save the PDF, reload it, and verify nothing is broken.
 
 ### Keeping tests up to date
 
