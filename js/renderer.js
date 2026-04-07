@@ -2,6 +2,86 @@ import { showFormatToolbar, repositionToolbar } from './toolbar.js';
 import { makeEditable } from './editor.js';
 
 // ============================================
+// Image toolbar
+// ============================================
+const imageToolbar = document.getElementById('imageToolbar');
+const imgDeleteBtn = document.getElementById('imgDelete');
+let activeImageItem = null;
+
+function showImageToolbar(imageItemData) {
+    activeImageItem = imageItemData;
+    const el = imageItemData.element;
+
+    // Show off-screen first to measure
+    imageToolbar.style.left = '-9999px';
+    imageToolbar.style.top = '-9999px';
+    imageToolbar.style.display = 'flex';
+
+    repositionImageToolbar(imageItemData);
+
+    // Mark as selected
+    document.querySelectorAll('.draggable-image.selected').forEach(e => e.classList.remove('selected'));
+    el.classList.add('selected');
+}
+
+function hideImageToolbar() {
+    imageToolbar.style.display = 'none';
+    if (activeImageItem) {
+        activeImageItem.element.classList.remove('selected');
+    }
+    activeImageItem = null;
+}
+
+function repositionImageToolbar(imageItemData) {
+    const rect = imageItemData.element.getBoundingClientRect();
+    const tbRect = imageToolbar.getBoundingClientRect();
+
+    let left = rect.left + rect.width / 2 - tbRect.width / 2;
+    let top = rect.top - tbRect.height - 8;
+
+    if (left < 8) left = 8;
+    if (left + tbRect.width > window.innerWidth - 8) left = window.innerWidth - tbRect.width - 8;
+    if (top < 8) top = rect.bottom + 8;
+
+    imageToolbar.style.left = left + 'px';
+    imageToolbar.style.top = top + 'px';
+}
+
+// Reposition on scroll
+window.addEventListener('scroll', () => {
+    if (activeImageItem) repositionImageToolbar(activeImageItem);
+}, true);
+
+// Prevent toolbar clicks from deselecting
+imageToolbar.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+});
+
+// Hide when clicking outside
+document.addEventListener('mousedown', (e) => {
+    if (!activeImageItem) return;
+    if (imageToolbar.contains(e.target)) return;
+    if (e.target.classList && e.target.classList.contains('draggable-image')) return;
+    if (e.target.classList && e.target.classList.contains('img-resize-handle')) return;
+    hideImageToolbar();
+});
+
+// Delete image
+imgDeleteBtn.addEventListener('click', () => {
+    if (!activeImageItem) return;
+    const img = activeImageItem;
+
+    // Cover original position on canvas
+    if (!img.originalCovered && img.canvas) {
+        coverOriginalImage(img, img.canvas);
+    }
+
+    img.deleted = true;
+    img.element.style.display = 'none';
+    hideImageToolbar();
+});
+
+// ============================================
 // Render PDF pages
 // ============================================
 export async function renderPDF(pdfDoc, pdfViewer, textItems, imageItems) {
@@ -429,7 +509,7 @@ function coverOriginalImage(imageItemData, canvas) {
     imageItemData.originalCovered = true;
 }
 
-function setupImageDrag(overlay, imageItemData, canvas) {
+export function setupImageDrag(overlay, imageItemData, canvas) {
     let dragState = null;
 
     overlay.addEventListener('dragstart', (e) => {
@@ -472,11 +552,13 @@ function setupImageDrag(overlay, imageItemData, canvas) {
                 dragState.moved = true;
                 overlay.classList.add('dragging');
                 coverOriginalImage(imageItemData, canvas);
+                showImageToolbar(imageItemData);
             }
 
             if (dragState.moved) {
                 overlay.style.left = (dragState.origLeft + dx) + 'px';
                 overlay.style.top = (dragState.origTop + dy) + 'px';
+                repositionImageToolbar(imageItemData);
             }
         };
 
@@ -493,6 +575,9 @@ function setupImageDrag(overlay, imageItemData, canvas) {
                 imageItemData.moveOffsetY += dy;
                 overlay.classList.remove('dragging');
                 overlay.classList.add('moved');
+                showImageToolbar(imageItemData);
+            } else {
+                showImageToolbar(imageItemData);
             }
 
             dragState = null;

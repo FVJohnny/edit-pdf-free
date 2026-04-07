@@ -192,6 +192,46 @@ body.drag-over-page::after {
     font-weight: 400;
 }
 
+/* PDF Tools Bar */
+.pdf-tools {
+    display: none;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 20px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+}
+
+.pdf-tools.visible {
+    display: flex;
+}
+
+.pdf-tools-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 5px 10px;
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--text-muted);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-family: var(--font-body);
+    font-size: 0.8rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all var(--transition);
+}
+
+.pdf-tools-btn:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--text);
+    border-color: var(--text-dim);
+}
+
+.hidden-input {
+    display: none;
+}
+
 /* PDF Container */
 .pdf-container {
     overflow: hidden;
@@ -332,6 +372,10 @@ body.drag-over-page::after {
     z-index: 1001;
 }
 
+.draggable-image.selected {
+    outline: 2px solid var(--accent);
+}
+
 /* Image resize handles */
 .img-resize-handle {
     position: absolute;
@@ -373,6 +417,24 @@ body.drag-over-page::after {
     background: var(--accent);
     border-radius: 2px;
     box-shadow: 0 0 2px rgba(0,0,0,0.3);
+}
+
+/* ============================================
+   Image Toolbar
+   ============================================ */
+
+.image-toolbar {
+    position: fixed;
+    z-index: 2000;
+    background: #1a1a1a;
+    border: 1px solid #333;
+    border-radius: 8px;
+    padding: 4px 6px;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+    user-select: none;
 }
 
 /* ============================================

@@ -28,7 +28,7 @@
                 <span class="hero-title--accent">to edit a PDF?</span>
             </h1>
             <p class="hero-subtitle" data-animate="fade-up" data-delay="2">
-                I was too. So I built this. No subscription, no account, no watermarks.<br>
+                I was too. So I built this. No subscription, no account, no watermarks.<br><br>
                 Everything happens in your browser — your PDF never leaves your device.<br>
                 Just drop your file and start editing.
             </p>
@@ -100,6 +100,15 @@
                     </div>
                 </div>
 
+                <!-- PDF Tools Bar (visible when PDF loaded) -->
+                <div class="pdf-tools" id="pdfTools">
+                    <button class="pdf-tools-btn" id="importImageBtn" title="Import an image into the PDF">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+                        Import Image
+                    </button>
+                    <input type="file" id="imageInput" accept="image/png,image/jpeg,image/jpg" class="hidden-input">
+                </div>
+
                 <!-- PDF Viewer -->
                 <div class="pdf-container">
                     <div id="pdfViewer" class="pdf-viewer">
@@ -115,6 +124,11 @@
             </div>
         </div>
     </section>
+
+    <!-- Floating image toolbar -->
+    <div id="imageToolbar" class="image-toolbar" style="display:none;">
+        <button class="fmt-btn fmt-btn--del" id="imgDelete" title="Delete image">&#128465;</button>
+    </div>
 
     <!-- Floating text format toolbar -->
     <div id="formatToolbar" class="format-toolbar" style="display:none;">

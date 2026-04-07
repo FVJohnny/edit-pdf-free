@@ -4,7 +4,13 @@
 
 A small toolbar that appears above the PDF once loaded.
 
-- [ ] **Import Image** — Add an external image (PNG/JPG) to the PDF at a clicked position
-- [ ] **Add Text** — Insert a new text block at a clicked position
+- [x] **Import Image** — Add an external image (PNG/JPG) to the pdf
+- [ ] **Add Text** — Insert a new text block
 - [ ] **Undo** — Undo the last edit, move, or resize action
 - [ ] **Zoom In / Zoom Out** — Control the PDF view zoom level
+
+## Image Toolbar
+
+A floating toolbar that appears when clicking on an image (similar to text format toolbar).
+
+- [x] **Delete Image** — Remove an image from the PDF (trash icon button)

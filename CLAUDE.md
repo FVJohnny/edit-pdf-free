@@ -106,3 +106,4 @@ When adding or removing features, update this test plan accordingly. New feature
 ## Rules
 
 - **Never commit without explicit user approval.** Always ask before committing.
+- **Track all work in TODO.md.** Every new feature or task must be added to `TODO.md` with a checkbox. Check it off when complete.

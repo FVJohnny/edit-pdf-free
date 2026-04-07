@@ -305,9 +305,43 @@ export async function savePDF(pdfBytes, textItems, imageItems, originalFileName)
             }
         }
 
-        // Handle moved/resized images
+        // Handle imported images
+        const importedImages = imageItems.filter(img => img.type === 'imported-image' && !img.deleted);
+        for (const img of importedImages) {
+            const page = pages[img.pageNum - 1];
+            const pageHeight = page.getHeight();
+
+            // Embed the image
+            let embeddedImage;
+            if (img.importedImageType === 'image/png') {
+                embeddedImage = await pdfLibDoc.embedPng(img.importedImageBytes);
+            } else {
+                embeddedImage = await pdfLibDoc.embedJpg(img.importedImageBytes);
+            }
+
+            // Calculate final position (original + any drag offset)
+            const finalCssLeft = img.cssLeft + img.moveOffsetX;
+            const finalCssTop = img.cssTop + img.moveOffsetY;
+            const finalW = img.resizedWidth || img.cssWidth;
+            const finalH = img.resizedHeight || img.cssHeight;
+
+            const pdfX = finalCssLeft / img.scale;
+            const pdfY = pageHeight - (finalCssTop + finalH) / img.scale;
+            const pdfW = finalW / img.scale;
+            const pdfH = finalH / img.scale;
+
+            page.drawImage(embeddedImage, {
+                x: pdfX,
+                y: pdfY,
+                width: pdfW,
+                height: pdfH,
+            });
+        }
+
+        // Handle moved/resized/deleted images
         const movedImages = imageItems.filter(img =>
-            img.moveOffsetX !== 0 || img.moveOffsetY !== 0 || img.resizedWidth || img.resizedHeight
+            img.type !== 'imported-image' &&
+            (img.deleted || img.moveOffsetX !== 0 || img.moveOffsetY !== 0 || img.resizedWidth || img.resizedHeight)
         );
         const imagesByPage = {};
         movedImages.forEach(img => {
@@ -337,27 +371,28 @@ export async function savePDF(pdfBytes, textItems, imageItems, originalFileName)
                     color: PDFLib.rgb(bg.r, bg.g, bg.b),
                 });
 
-                // Calculate new position and dimensions in PDF coordinates
-                const moveX = img.moveOffsetX / img.scale;
-                const moveY = -img.moveOffsetY / img.scale;
+                // Redraw at new position (skip if deleted)
+                if (!img.deleted) {
+                    const moveX = img.moveOffsetX / img.scale;
+                    const moveY = -img.moveOffsetY / img.scale;
 
-                const newPdfW = img.resizedWidth ? img.resizedWidth / img.scale : pdfW;
-                const newPdfH = img.resizedHeight ? img.resizedHeight / img.scale : pdfH;
+                    const newPdfW = img.resizedWidth ? img.resizedWidth / img.scale : pdfW;
+                    const newPdfH = img.resizedHeight ? img.resizedHeight / img.scale : pdfH;
 
-                const newX = origX + moveX;
-                const newY = origY + moveY;
+                    const newX = origX + moveX;
+                    const newY = origY + moveY;
 
-                // Find the image XObject name
-                const imgRefName = findImageXObjectName(page, pdfLibDoc, img.imageSeqIndex);
+                    const imgRefName = findImageXObjectName(page, pdfLibDoc, img.imageSeqIndex);
 
-                if (imgRefName) {
-                    const streamContent =
-                        `q\n${newPdfW} 0 0 ${newPdfH} ${newX} ${newY} cm\n/${imgRefName} Do\nQ\n`;
-                    const encoder = new TextEncoder();
-                    const streamBytes = encoder.encode(streamContent);
-                    const stream = pdfLibDoc.context.stream(streamBytes);
-                    const streamRef = pdfLibDoc.context.register(stream);
-                    page.node.addContentStream(streamRef);
+                    if (imgRefName) {
+                        const streamContent =
+                            `q\n${newPdfW} 0 0 ${newPdfH} ${newX} ${newY} cm\n/${imgRefName} Do\nQ\n`;
+                        const encoder = new TextEncoder();
+                        const streamBytes = encoder.encode(streamContent);
+                        const stream = pdfLibDoc.context.stream(streamBytes);
+                        const streamRef = pdfLibDoc.context.register(stream);
+                        page.node.addContentStream(streamRef);
+                    }
                 }
             }
         }
