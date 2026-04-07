@@ -55,12 +55,17 @@ export async function renderPDF(pdfDoc, pdfViewer, textItems, imageItems) {
 
         const textLayerDiv = createTextLayerDiv(viewport);
 
+        const pageTextItems = [];
         textContent.items.forEach((item, index) => {
-            const textItem = createTextItem(item, index, pageNum, viewport, canvas, textContent, page);
+            pageTextItems.push(createTextItem(item, index, pageNum, viewport, canvas, textContent, page));
+        });
+
+        const mergedItems = mergeAdjacentTextItems(pageTextItems);
+        for (const textItem of mergedItems) {
             textItems.push(textItem);
             setupTextDrag(textItem.element, textItem, canvas);
             textLayerDiv.appendChild(textItem.element);
-        });
+        }
 
         await extractImages(page, viewport, canvas, textLayerDiv, imageItems, pageNum);
 
@@ -142,6 +147,170 @@ function createTextItem(item, index, pageNum, viewport, canvas, textContent, pag
         cssTop: canvasY - item.height,
         canvas,
         renderedFontSize,
+    };
+}
+
+/**
+ * Merge adjacent text items into logical groups:
+ *   Pass 1: Merge items on the same line (horizontal — same baseline, adjacent)
+ *   Pass 2: Merge consecutive lines into paragraphs (vertical — similar left edge,
+ *           similar font size, vertical gap ≈ line height)
+ */
+function mergeAdjacentTextItems(items) {
+    if (items.length <= 1) return items;
+
+    // Sort by Y position (top), then X position (left)
+    const sorted = [...items].sort((a, b) => {
+        const yDiff = a.cssTop - b.cssTop;
+        if (Math.abs(yDiff) > 5) return yDiff;
+        return a.cssLeft - b.cssLeft;
+    });
+
+    // Pass 1: Merge items on the same line
+    const lines = [];
+    let current = sorted[0];
+
+    for (let i = 1; i < sorted.length; i++) {
+        const next = sorted[i];
+
+        const baselineA = current.cssTop + current.renderedFontSize;
+        const baselineB = next.cssTop + next.renderedFontSize;
+        const baselineTolerance = Math.max(current.renderedFontSize, next.renderedFontSize) * 0.3;
+        const sameBaseline = Math.abs(baselineA - baselineB) < baselineTolerance;
+
+        const currentRight = current.cssLeft + current.originalWidth;
+        const gap = next.cssLeft - currentRight;
+        const maxGap = Math.max(current.renderedFontSize, next.renderedFontSize) * 0.5;
+        const adjacent = gap >= -2 && gap < maxGap;
+
+        if (sameBaseline && adjacent && current.originalText.trim() !== '' && next.originalText.trim() !== '') {
+            current = mergeInline(current, next);
+        } else {
+            lines.push(current);
+            current = next;
+        }
+    }
+    lines.push(current);
+
+    // Pass 2: Merge consecutive lines into paragraphs.
+    // Use baseline-to-baseline distance as the metric — this is the most reliable
+    // way to detect line spacing vs paragraph breaks in PDFs.
+    // Within a paragraph: baseline distance ≈ 1.1–1.3x font size (normal line spacing)
+    // Paragraph break: baseline distance ≈ 1.6x+ font size (extra gap)
+    const paragraphs = [];
+    current = lines[0];
+    let lastBaselineDist = null;
+
+    for (let i = 1; i < lines.length; i++) {
+        const nextLine = lines[i];
+
+        // Similar font size (within 20%)
+        const similarSize = Math.abs(current.renderedFontSize - nextLine.renderedFontSize) <
+            current.renderedFontSize * 0.2;
+
+        // Similar left edge (within 1 font size)
+        const similarLeft = Math.abs(current.cssLeft - nextLine.cssLeft) < current.renderedFontSize;
+
+        // Baseline-to-baseline distance: from the last line's baseline to next line's baseline
+        // For single-line items: baseline = cssTop + renderedFontSize
+        // For merged items: use lastBaselineY which tracks the bottom-most line's baseline
+        const currentBaseline = current.lastBaselineY ?? (current.cssTop + current.renderedFontSize);
+        const nextBaseline = nextLine.cssTop + nextLine.renderedFontSize;
+        const baselineDist = nextBaseline - currentBaseline;
+
+        // Normal line spacing is 1.1–1.4x font size. Paragraph breaks are 1.6x+.
+        const fontSize = Math.max(current.renderedFontSize, nextLine.renderedFontSize);
+        const normalSpacing = baselineDist > 0 && baselineDist < fontSize * 1.5;
+
+        // Consistency check: if we've seen within-paragraph spacing, reject
+        // distances that are 25%+ larger (indicates a paragraph break)
+        let consistent = true;
+        if (lastBaselineDist !== null && baselineDist > lastBaselineDist * 1.25 + 1) {
+            consistent = false;
+        }
+
+        const bothNonEmpty = current.originalText.trim() !== '' && nextLine.originalText.trim() !== '';
+
+        if (similarSize && similarLeft && normalSpacing && consistent && bothNonEmpty) {
+            if (lastBaselineDist === null) lastBaselineDist = baselineDist;
+            current = mergeLines(current, nextLine);
+        } else {
+            paragraphs.push(current);
+            current = nextLine;
+            lastBaselineDist = null;
+        }
+    }
+    paragraphs.push(current);
+
+    return paragraphs;
+}
+
+/** Merge two horizontally adjacent items on the same line. */
+function mergeInline(a, b) {
+    const mergedText = a.originalText + b.originalText;
+    const mergedRight = Math.max(a.cssLeft + a.originalWidth, b.cssLeft + b.originalWidth);
+    const mergedWidth = mergedRight - a.cssLeft;
+    const fontSize = Math.max(a.renderedFontSize, b.renderedFontSize);
+    const mergedTop = Math.min(a.cssTop, b.cssTop);
+
+    a.element.textContent = mergedText;
+    a.element.style.fontSize = fontSize + 'px';
+    a.element.style.top = mergedTop + 'px';
+
+    if (b.element.parentNode) b.element.parentNode.removeChild(b.element);
+
+    const subItems = [...(a.subItems || [a]), ...(b.subItems || [b])];
+
+    return {
+        ...a,
+        originalText: mergedText,
+        currentText: mergedText,
+        width: mergedWidth / a.scale,
+        originalWidth: mergedWidth,
+        renderedFontSize: fontSize,
+        cssTop: mergedTop,
+        subItems,
+    };
+}
+
+/** Merge two lines into a multi-line paragraph. */
+function mergeLines(a, b) {
+    const mergedText = a.originalText + '\n' + b.originalText;
+    const mergedLeft = Math.min(a.cssLeft, b.cssLeft);
+    const mergedRight = Math.max(a.cssLeft + a.originalWidth, b.cssLeft + b.originalWidth);
+    const mergedWidth = mergedRight - mergedLeft;
+    const mergedTop = Math.min(a.cssTop, b.cssTop);
+    const mergedBottom = Math.max(
+        b.cssTop + (b.mergedHeight || b.renderedFontSize),
+        a.cssTop + (a.mergedHeight || a.renderedFontSize)
+    );
+    const mergedHeight = mergedBottom - mergedTop;
+    const fontSize = Math.max(a.renderedFontSize, b.renderedFontSize);
+
+    // For multi-line, use white-space: pre-wrap so \n renders as line breaks
+    a.element.textContent = mergedText;
+    a.element.style.fontSize = fontSize + 'px';
+    a.element.style.left = mergedLeft + 'px';
+    a.element.style.top = mergedTop + 'px';
+    a.element.style.whiteSpace = 'pre-wrap';
+    a.element.style.width = mergedWidth + 'px';
+
+    if (b.element.parentNode) b.element.parentNode.removeChild(b.element);
+
+    const subItems = [...(a.subItems || [a]), ...(b.subItems || [b])];
+
+    return {
+        ...a,
+        originalText: mergedText,
+        currentText: mergedText,
+        width: mergedWidth / a.scale,
+        originalWidth: mergedWidth,
+        renderedFontSize: fontSize,
+        cssLeft: mergedLeft,
+        cssTop: mergedTop,
+        mergedHeight,
+        lastBaselineY: b.cssTop + b.renderedFontSize,
+        subItems,
     };
 }
 

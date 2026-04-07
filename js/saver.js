@@ -131,28 +131,87 @@ async function processModifiedText(doc, pages, textItems, fonts, fontInfoCache) 
             const newX = pdfX + dragOffsetX;
             const newY = pdfY + dragOffsetY;
 
-            const cleanText = item.currentText.replace(/[\r\n]/g, ' ');
             const fallbackFont = getFallbackFont(item, fonts);
-            const newTextWidth = fallbackFont.widthOfTextAtSize(cleanText, fontSize);
-            const coverWidth = Math.max(item.width, newTextWidth) + PDF_COVER_WIDTH_PADDING;
             const bgColor = item.bgColor || { r: 1, g: 1, b: 1 };
 
-            // Cover original text position with a background-colored rectangle
-            page.drawRectangle({
-                x: pdfX - PDF_COVER_X_OFFSET,
-                y: pdfY - (pdfFontSize * PDF_COVER_BOTTOM_EXTEND),
-                width: coverWidth,
-                height: pdfFontSize * PDF_COVER_HEIGHT_SCALE,
-                color: PDFLib.rgb(bgColor.r, bgColor.g, bgColor.b),
-            });
+            // Cover original text position(s) with background-colored rectangle(s).
+            // Merged items have subItems — cover each sub-item's original position.
+            const itemsToCover = item.subItems || [item];
+            for (const sub of itemsToCover) {
+                const subPdfX = sub.transform[4];
+                const subPdfY = sub.transform[5];
+                const subFontSize = Math.sqrt(sub.transform[0] ** 2 + sub.transform[1] ** 2);
+                const subWidth = sub.width + PDF_COVER_WIDTH_PADDING;
+                const subBg = sub.bgColor || bgColor;
+                page.drawRectangle({
+                    x: subPdfX - PDF_COVER_X_OFFSET,
+                    y: subPdfY - (subFontSize * PDF_COVER_BOTTOM_EXTEND),
+                    width: subWidth,
+                    height: subFontSize * PDF_COVER_HEIGHT_SCALE,
+                    color: PDFLib.rgb(subBg.r, subBg.g, subBg.b),
+                });
+            }
 
             if (item.deleted) continue;
 
             const textColor = item.textColorOverride || item.textColor || { r: 0, g: 0, b: 0 };
-
-            // Try original font first (only if no style overrides, since we can't
-            // change the weight/style of the embedded PDF font)
             const hasStyleOverride = item.fontWeightOverride || item.fontStyleOverride;
+
+            // For merged multi-line items, draw each line at its original Y position.
+            // Group sub-items by baseline Y to identify distinct lines.
+            if (item.subItems && item.currentText.includes('\n')) {
+                const lines = item.currentText.split('\n');
+
+                // Group sub-items into lines by baseline Y proximity
+                const subLines = [];
+                for (const sub of item.subItems) {
+                    const subY = sub.transform[5];
+                    const existing = subLines.find(g =>
+                        Math.abs(g.baselineY - subY) < 2
+                    );
+                    if (existing) {
+                        existing.subs.push(sub);
+                    } else {
+                        subLines.push({ baselineY: subY, subs: [sub] });
+                    }
+                }
+                // Sort by Y descending (PDF Y goes up, so first line has highest Y)
+                subLines.sort((a, b) => b.baselineY - a.baselineY);
+
+                for (let li = 0; li < lines.length; li++) {
+                    const lineText = lines[li].replace(/[\r]/g, '');
+                    if (!lineText) continue;
+
+                    // Use the corresponding sub-line's position, or fall back to first
+                    const subLine = subLines[li] || subLines[subLines.length - 1];
+                    const lineSub = subLine.subs[0];
+                    const linePdfX = lineSub.transform[4] + dragOffsetX;
+                    const linePdfY = subLine.baselineY + dragOffsetY;
+                    const lineFontSize = item.fontSizeOverride
+                        ? item.fontSizeOverride / item.scale
+                        : Math.sqrt(lineSub.transform[0] ** 2 + lineSub.transform[1] ** 2);
+
+                    if (!hasStyleOverride) {
+                        const fontInfo = await getFontInfo(doc, page, lineSub.fontName, fontInfoCache);
+                        if (fontInfo && tryDrawWithOriginalFont(doc, page, fontInfo, lineText, lineFontSize, linePdfX, linePdfY, textColor)) {
+                            continue;
+                        }
+                    }
+
+                    page.drawText(lineText, {
+                        x: linePdfX, y: linePdfY,
+                        size: lineFontSize,
+                        font: fallbackFont,
+                        color: PDFLib.rgb(textColor.r, textColor.g, textColor.b),
+                    });
+                }
+                continue;
+            }
+
+            // Single-line item
+            const cleanText = item.currentText.replace(/[\r\n]/g, ' ');
+
+            // Try original font first (only if no style overrides)
             if (!hasStyleOverride) {
                 const fontInfo = await getFontInfo(doc, page, item.fontName, fontInfoCache);
                 if (fontInfo && tryDrawWithOriginalFont(doc, page, fontInfo, cleanText, fontSize, newX, newY, textColor)) {
@@ -160,7 +219,6 @@ async function processModifiedText(doc, pages, textItems, fonts, fontInfoCache) 
                 }
             }
 
-            // Fallback: draw with standard font
             page.drawText(cleanText, {
                 x: newX, y: newY,
                 size: fontSize,

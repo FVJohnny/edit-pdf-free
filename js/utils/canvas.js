@@ -39,11 +39,19 @@ export function coverOriginalText(textItem, spanWidth) {
     const ctx = textItem.canvas.getContext('2d');
     const fontSize = textItem.renderedFontSize;
     ctx.fillStyle = rgbToCss(textItem.bgColor);
+
+    // For multi-line merged items, cover the full merged height.
+    // mergedHeight already spans top-of-first-line to bottom-of-last-line,
+    // so only add the small top offset to account for ascenders.
+    const coverHeight = textItem.mergedHeight
+        ? textItem.mergedHeight + fontSize * TEXT_COVER_TOP_OFFSET
+        : fontSize * TEXT_COVER_HEIGHT_SCALE;
+
     ctx.fillRect(
         textItem.cssLeft,
         textItem.cssTop - fontSize * TEXT_COVER_TOP_OFFSET,
         spanWidth + COVER_PADDING,
-        fontSize * TEXT_COVER_HEIGHT_SCALE
+        coverHeight
     );
     textItem.originalCovered = true;
 }

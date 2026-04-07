@@ -267,9 +267,14 @@ body.drag-over-page::after {
     display: none;
 }
 
-/* PDF Container */
+/* PDF Container — hidden until a PDF is loaded */
 .pdf-container {
     overflow: hidden;
+    display: none;
+}
+
+.pdf-container.visible {
+    display: block;
 }
 
 .pdf-viewer {

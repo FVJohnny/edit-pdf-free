@@ -3,6 +3,7 @@ import { renderPDF, setupImageDrag, setupTextDrag } from './renderer.js';
 import { makeEditable } from './editor.js';
 import { savePDF } from './saver.js';
 import { undo, redo, onHistoryChange, clearHistory, recordAction } from './history.js';
+import { getActiveTextItem } from './toolbar.js';
 import { MAX_IMPORT_SCALE } from './utils/constants.js';
 
 // PDF.js worker setup
@@ -17,6 +18,7 @@ let originalFileName = '';
 const pdfInput = document.getElementById('pdfInput');
 const saveBtn = document.getElementById('saveBtn');
 const pdfViewer = document.getElementById('pdfViewer');
+const pdfContainer = document.querySelector('.pdf-container');
 const uploadZone = document.getElementById('uploadZone');
 const toolbar = document.getElementById('toolbar');
 const fileNameEl = document.getElementById('fileName');
@@ -54,6 +56,29 @@ document.addEventListener('keydown', (e) => {
     if ((e.ctrlKey || e.metaKey) && e.key === 'y') {
         e.preventDefault();
         redo();
+    }
+
+    // Delete/Backspace: delete selected text or image (only when not editing text)
+    if (e.key === 'Delete' || e.key === 'Backspace') {
+        // Don't interfere with text editing
+        const activeEl = document.activeElement;
+        if (activeEl && (activeEl.contentEditable === 'true' || activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA')) return;
+
+        // Try text delete button
+        const textItem = getActiveTextItem();
+        if (textItem) {
+            e.preventDefault();
+            document.getElementById('fmtDelete').click();
+            return;
+        }
+
+        // Try image delete button
+        const imgDeleteBtn = document.getElementById('imgDelete');
+        const imgToolbar = document.getElementById('imageToolbar');
+        if (imgToolbar && imgToolbar.style.display !== 'none') {
+            e.preventDefault();
+            imgDeleteBtn.click();
+        }
     }
 });
 
@@ -98,6 +123,7 @@ async function loadPDF(file) {
         uploadZone.classList.add('hidden');
         toolbar.classList.add('visible');
         pdfTools.classList.add('visible');
+        pdfContainer.classList.add('visible');
         fileNameEl.textContent = file.name;
         saveBtn.disabled = false;
 
