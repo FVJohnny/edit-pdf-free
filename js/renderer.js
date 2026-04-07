@@ -17,6 +17,10 @@ import { sampleBgColor, sampleTextColor, sampleImageBgColor, rgbToCss } from './
 import { coverOriginalText, captureCanvasRegion } from './utils/canvas.js';
 import { DRAG_THRESHOLD, MIN_RESIZE_PX, MIN_IMAGE_SIZE } from './utils/constants.js';
 
+function clamp(value, min, max) {
+    return Math.max(min, Math.min(max, value));
+}
+
 // ============================================
 // Render PDF pages
 // ============================================
@@ -331,6 +335,9 @@ export function setupImageDrag(overlay, imageItemData, canvas) {
         e.preventDefault();
         e.stopPropagation();
 
+        const imgW = parseFloat(overlay.style.width);
+        const imgH = parseFloat(overlay.style.height);
+
         dragState = {
             startX: e.clientX,
             startY: e.clientY,
@@ -352,20 +359,23 @@ export function setupImageDrag(overlay, imageItemData, canvas) {
             }
 
             if (dragState.hasMoved) {
-                overlay.style.left = (dragState.origLeft + dx) + 'px';
-                overlay.style.top = (dragState.origTop + dy) + 'px';
+                // Clamp to page canvas boundaries
+                const newLeft = clamp(dragState.origLeft + dx, 0, canvas.width - imgW);
+                const newTop = clamp(dragState.origTop + dy, 0, canvas.height - imgH);
+                overlay.style.left = newLeft + 'px';
+                overlay.style.top = newTop + 'px';
                 repositionImageToolbar(imageItemData);
             }
         };
 
-        const onMouseUp = (e) => {
+        const onMouseUp = () => {
             document.removeEventListener('mousemove', onMouseMove);
             document.removeEventListener('mouseup', onMouseUp);
             if (!dragState) return;
 
             if (dragState.hasMoved) {
-                imageItemData.moveOffsetX += e.clientX - dragState.startX;
-                imageItemData.moveOffsetY += e.clientY - dragState.startY;
+                imageItemData.moveOffsetX += parseFloat(overlay.style.left) - dragState.origLeft;
+                imageItemData.moveOffsetY += parseFloat(overlay.style.top) - dragState.origTop;
                 overlay.classList.remove('dragging');
                 overlay.classList.add('moved');
             }
@@ -478,12 +488,15 @@ function setupTextDrag(span, textItemData, canvas) {
         e.preventDefault();
         e.stopPropagation();
 
+        const spanRect = span.getBoundingClientRect();
+
         dragState = {
             startX: e.clientX,
             startY: e.clientY,
             origLeft: parseFloat(span.style.left),
             origTop: parseFloat(span.style.top),
-            spanWidth: span.getBoundingClientRect().width,
+            spanWidth: spanRect.width,
+            spanHeight: spanRect.height,
             hasMoved: false,
         };
 
@@ -500,20 +513,23 @@ function setupTextDrag(span, textItemData, canvas) {
             }
 
             if (dragState.hasMoved) {
-                span.style.left = (dragState.origLeft + dx) + 'px';
-                span.style.top = (dragState.origTop + dy) + 'px';
+                // Clamp to page canvas boundaries
+                const newLeft = clamp(dragState.origLeft + dx, 0, canvas.width - dragState.spanWidth);
+                const newTop = clamp(dragState.origTop + dy, 0, canvas.height - dragState.spanHeight);
+                span.style.left = newLeft + 'px';
+                span.style.top = newTop + 'px';
                 repositionToolbar(textItemData);
             }
         };
 
-        const onMouseUp = (e) => {
+        const onMouseUp = () => {
             document.removeEventListener('mousemove', onMouseMove);
             document.removeEventListener('mouseup', onMouseUp);
             if (!dragState) return;
 
             if (dragState.hasMoved) {
-                textItemData.moveOffsetX += e.clientX - dragState.startX;
-                textItemData.moveOffsetY += e.clientY - dragState.startY;
+                textItemData.moveOffsetX += parseFloat(span.style.left) - dragState.origLeft;
+                textItemData.moveOffsetY += parseFloat(span.style.top) - dragState.origTop;
                 span.classList.remove('dragging');
                 span.classList.add('modified', 'moved');
                 showFormatToolbar(textItemData);
