@@ -1,6 +1,6 @@
 # [EditPDFFree.com](https://editpdffree.com)
 
-A free, browser-based PDF editor. No signup, no subscription, no watermarks. Everything runs locally in your browser — your PDF never leaves your device.
+A free, browser-based PDF editor. No signup, no subscription, no watermarks. Everything runs locally in your browser. Your PDF never leaves your device.
 
 ## Features
 
