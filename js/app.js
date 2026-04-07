@@ -107,12 +107,12 @@ async function importImage(file) {
         canvas.height * MAX_IMPORT_SCALE
     );
 
-    // Center on the visible area of the page
+    // Place centered horizontally, near the top of the visible area
     const viewerRect = pdfViewer.getBoundingClientRect();
     const pageRect = targetPage.getBoundingClientRect();
     const visibleTopOnPage = viewerRect.top - pageRect.top;
     const cssLeft = (canvas.width - imgWidth) / 2;
-    const cssTop = Math.max(10, visibleTopOnPage + (viewerRect.height - imgHeight) / 2);
+    const cssTop = Math.max(10, visibleTopOnPage + 20);
 
     // Compute scale factor (canvas pixels per PDF point) — same as renderPDF uses
     const pdfPage = await pdfDoc.getPage(pageNum);
