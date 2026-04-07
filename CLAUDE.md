@@ -23,8 +23,11 @@ js/
   editor.js             — inline text editing (contentEditable)
   renderer.js           — PDF rendering, text/image extraction, drag-to-move, resize
   saver.js              — PDF save: text, images, CMap fonts, download
+  types.js              — JSDoc type definitions (TextItem, ImageItem, coordinate docs)
   utils/
+    constants.js        — shared numeric constants (thresholds, sizes, margins)
     color.js            — RGB/hex conversion, color sampling from canvas
+    canvas.js           — cover original positions, capture canvas regions
     floating-toolbar.js — shared floating toolbar positioning and dismiss logic
 css/
   base.css              — variables, reset, buttons, animations

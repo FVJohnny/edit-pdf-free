@@ -1,6 +1,7 @@
 import { initDragDrop, showToast } from './ui.js';
 import { renderPDF, setupImageDrag } from './renderer.js';
 import { savePDF } from './saver.js';
+import { MAX_IMPORT_SCALE } from './utils/constants.js';
 
 // PDF.js worker setup
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
@@ -88,70 +89,36 @@ imageInput.addEventListener('change', (e) => {
 });
 
 async function importImage(file) {
-    // Find the first visible page container
-    const pageContainers = pdfViewer.querySelectorAll(':scope > div');
-    if (pageContainers.length === 0) return;
-
-    // Find which page is most visible in the scroll viewport
-    let targetPage = pageContainers[0];
-    let targetPageNum = 1;
-    const viewerRect = pdfViewer.getBoundingClientRect();
-    const viewerMid = viewerRect.top + viewerRect.height / 2;
-
-    for (let i = 0; i < pageContainers.length; i++) {
-        const rect = pageContainers[i].getBoundingClientRect();
-        if (rect.top <= viewerMid && rect.bottom >= viewerMid) {
-            targetPage = pageContainers[i];
-            targetPageNum = i + 1;
-            break;
-        }
-    }
+    const { page: targetPage, pageNum } = findVisiblePage();
+    if (!targetPage) return;
 
     const canvas = targetPage.querySelector('canvas');
     const textLayer = targetPage.querySelector('.custom-text-layer');
     if (!canvas || !textLayer) return;
 
     // Load the image to get its natural dimensions
-    const img = new Image();
-    const imageDataURL = await new Promise((resolve) => {
-        const reader = new FileReader();
-        reader.onload = (e) => resolve(e.target.result);
-        reader.readAsDataURL(file);
-    });
+    const imageDataURL = await readFileAsDataURL(file);
+    const img = await loadImage(imageDataURL);
 
-    await new Promise((resolve) => {
-        img.onload = resolve;
-        img.src = imageDataURL;
-    });
+    // Scale to fit within the page (max MAX_IMPORT_SCALE of page dimensions)
+    const { width: imgWidth, height: imgHeight } = scaleToFit(
+        img.naturalWidth, img.naturalHeight,
+        canvas.width * MAX_IMPORT_SCALE,
+        canvas.height * MAX_IMPORT_SCALE
+    );
 
-    // Scale image to fit reasonably within the page (max 50% of page width)
-    const maxWidth = canvas.width * 0.5;
-    const maxHeight = canvas.height * 0.5;
-    let imgWidth = img.naturalWidth;
-    let imgHeight = img.naturalHeight;
-
-    if (imgWidth > maxWidth) {
-        const ratio = maxWidth / imgWidth;
-        imgWidth = maxWidth;
-        imgHeight *= ratio;
-    }
-    if (imgHeight > maxHeight) {
-        const ratio = maxHeight / imgHeight;
-        imgHeight = maxHeight;
-        imgWidth *= ratio;
-    }
-
-    // Place in the center of the visible area
-    const scrollTop = pdfViewer.scrollTop;
+    // Center on the visible area of the page
+    const viewerRect = pdfViewer.getBoundingClientRect();
     const pageRect = targetPage.getBoundingClientRect();
-    const viewerVisibleTop = viewerRect.top - pageRect.top;
+    const visibleTopOnPage = viewerRect.top - pageRect.top;
     const cssLeft = (canvas.width - imgWidth) / 2;
-    const cssTop = Math.max(10, viewerVisibleTop + (viewerRect.height - imgHeight) / 2);
+    const cssTop = Math.max(10, visibleTopOnPage + (viewerRect.height - imgHeight) / 2);
 
-    // Compute scale from the page's canvas (same as renderPDF uses)
-    const scale = canvas.width / (pdfDoc ? (await pdfDoc.getPage(targetPageNum)).getViewport({ scale: 1 }).width : canvas.width);
+    // Compute scale factor (canvas pixels per PDF point) — same as renderPDF uses
+    const pdfPage = await pdfDoc.getPage(pageNum);
+    const scale = canvas.width / pdfPage.getViewport({ scale: 1 }).width;
 
-    // Create the overlay
+    // Create the draggable overlay
     const overlay = document.createElement('div');
     overlay.className = 'draggable-image moved';
     overlay.style.position = 'absolute';
@@ -163,24 +130,22 @@ async function importImage(file) {
     overlay.style.backgroundImage = `url(${imageDataURL})`;
     overlay.style.backgroundSize = '100% 100%';
 
-    // Read the image file bytes for embedding at save time
-    const imageBytes = new Uint8Array(await file.arrayBuffer());
-
+    /** @type {ImageItem} see js/types.js */
     const imageItemData = {
         element: overlay,
-        pageNum: targetPageNum,
+        pageNum,
         type: 'imported-image',
-        scale: scale,
-        cssLeft: cssLeft,
-        cssTop: cssTop,
+        scale,
+        cssLeft,
+        cssTop,
         cssWidth: imgWidth,
         cssHeight: imgHeight,
         bgColor: { r: 1, g: 1, b: 1 },
         moveOffsetX: 0,
         moveOffsetY: 0,
         originalCovered: false,
-        canvas: canvas,
-        importedImageBytes: imageBytes,
+        canvas,
+        importedImageBytes: new Uint8Array(await file.arrayBuffer()),
         importedImageType: file.type,
         importedImageDataURL: imageDataURL,
     };
@@ -188,8 +153,55 @@ async function importImage(file) {
     imageItems.push(imageItemData);
     setupImageDrag(overlay, imageItemData, canvas);
     textLayer.appendChild(overlay);
-
     showToast('Image imported — drag to position, resize as needed');
+}
+
+// ============================================
+// Import helpers
+// ============================================
+
+/** Find the page container most visible in the viewer's scroll viewport. */
+function findVisiblePage() {
+    const pageContainers = pdfViewer.querySelectorAll(':scope > div');
+    if (pageContainers.length === 0) return { page: null, pageNum: 0 };
+
+    const viewerMidY = pdfViewer.getBoundingClientRect().top + pdfViewer.getBoundingClientRect().height / 2;
+    for (let i = 0; i < pageContainers.length; i++) {
+        const rect = pageContainers[i].getBoundingClientRect();
+        if (rect.top <= viewerMidY && rect.bottom >= viewerMidY) {
+            return { page: pageContainers[i], pageNum: i + 1 };
+        }
+    }
+    return { page: pageContainers[0], pageNum: 1 };
+}
+
+function readFileAsDataURL(file) {
+    return new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onload = (e) => resolve(e.target.result);
+        reader.readAsDataURL(file);
+    });
+}
+
+function loadImage(src) {
+    return new Promise((resolve) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.src = src;
+    });
+}
+
+/** Scale dimensions to fit within maxWidth/maxHeight while preserving aspect ratio. */
+function scaleToFit(width, height, maxWidth, maxHeight) {
+    if (width > maxWidth) {
+        height *= maxWidth / width;
+        width = maxWidth;
+    }
+    if (height > maxHeight) {
+        width *= maxHeight / height;
+        height = maxHeight;
+    }
+    return { width, height };
 }
 
 // ============================================

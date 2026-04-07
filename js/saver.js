@@ -1,4 +1,23 @@
+/**
+ * PDF Saver — modifies the original PDF with user edits and downloads the result.
+ *
+ * Coordinate conversion: all item positions are stored in canvas pixels (see types.js).
+ * To convert back to PDF coordinates for saving:
+ *   pdfX = canvasX / scale
+ *   pdfY = pageHeight - canvasY / scale  (PDF Y is bottom-up, canvas Y is top-down)
+ *
+ * Text saving strategy:
+ *   1. Cover the original text position with a background-colored rectangle
+ *   2. If the text hasn't changed style, try to redraw using the original PDF font
+ *      (via CMap glyph encoding) — this preserves font fidelity
+ *   3. If that fails (or style was changed), fall back to a standard PDF font
+ *      (Helvetica, Times, Courier family)
+ */
 import { showToast, showPrompt } from './ui.js';
+import {
+    PDF_COVER_BOTTOM_EXTEND, PDF_COVER_HEIGHT_SCALE,
+    PDF_COVER_X_OFFSET, PDF_COVER_WIDTH_PADDING, ZLIB_HEADER,
+} from './utils/constants.js';
 
 // ============================================
 // Save modified PDF
@@ -10,18 +29,18 @@ export async function savePDF(pdfBytes, textItems, imageItems, originalFileName)
             return;
         }
 
-        const pdfLibDoc = await PDFLib.PDFDocument.load(pdfBytes);
-        if (typeof fontkit !== 'undefined') pdfLibDoc.registerFontkit(fontkit);
-        const pages = pdfLibDoc.getPages();
+        const doc = await PDFLib.PDFDocument.load(pdfBytes);
+        if (typeof fontkit !== 'undefined') doc.registerFontkit(fontkit);
+        const pages = doc.getPages();
 
-        const fonts = await embedStandardFonts(pdfLibDoc);
+        const fonts = await embedStandardFonts(doc);
         const fontInfoCache = {};
 
-        await processModifiedText(pdfLibDoc, pages, textItems, fonts, fontInfoCache);
-        await processImportedImages(pdfLibDoc, pages, imageItems);
-        processMovedImages(pdfLibDoc, pages, imageItems);
+        await processModifiedText(doc, pages, textItems, fonts, fontInfoCache);
+        await processImportedImages(doc, pages, imageItems);
+        processMovedImages(doc, pages, imageItems);
 
-        const modifiedPdfBytes = await pdfLibDoc.save();
+        const modifiedPdfBytes = await doc.save();
         await downloadPdf(modifiedPdfBytes, originalFileName);
     } catch (error) {
         console.error('Error saving PDF:', error);
@@ -35,21 +54,22 @@ export async function savePDF(pdfBytes, textItems, imageItems, originalFileName)
 async function embedStandardFonts(doc) {
     const S = PDFLib.StandardFonts;
     return {
-        helvetica: await doc.embedFont(S.Helvetica),
-        helveticaBold: await doc.embedFont(S.HelveticaBold),
-        helveticaOblique: await doc.embedFont(S.HelveticaOblique),
+        helvetica:            await doc.embedFont(S.Helvetica),
+        helveticaBold:        await doc.embedFont(S.HelveticaBold),
+        helveticaOblique:     await doc.embedFont(S.HelveticaOblique),
         helveticaBoldOblique: await doc.embedFont(S.HelveticaBoldOblique),
-        timesRoman: await doc.embedFont(S.TimesRoman),
-        timesRomanBold: await doc.embedFont(S.TimesRomanBold),
-        timesRomanItalic: await doc.embedFont(S.TimesRomanItalic),
+        timesRoman:           await doc.embedFont(S.TimesRoman),
+        timesRomanBold:       await doc.embedFont(S.TimesRomanBold),
+        timesRomanItalic:     await doc.embedFont(S.TimesRomanItalic),
         timesRomanBoldItalic: await doc.embedFont(S.TimesRomanBoldItalic),
-        courier: await doc.embedFont(S.Courier),
-        courierBold: await doc.embedFont(S.CourierBold),
-        courierOblique: await doc.embedFont(S.CourierOblique),
-        courierBoldOblique: await doc.embedFont(S.CourierBoldOblique),
+        courier:              await doc.embedFont(S.Courier),
+        courierBold:          await doc.embedFont(S.CourierBold),
+        courierOblique:       await doc.embedFont(S.CourierOblique),
+        courierBoldOblique:   await doc.embedFont(S.CourierBoldOblique),
     };
 }
 
+/** Pick the correct standard font variant based on family + weight/style overrides. */
 function getFallbackFont(item, fonts) {
     const isBold = (item.fontWeightOverride ?? item.fontWeight) === '700';
     const isItalic = (item.fontStyleOverride ?? item.fontStyle) === 'italic';
@@ -76,55 +96,68 @@ function getFallbackFont(item, fonts) {
 // ============================================
 // Process modified text items
 // ============================================
-async function processModifiedText(pdfLibDoc, pages, textItems, fonts, fontInfoCache) {
-    const pageTexts = {};
+async function processModifiedText(doc, pages, textItems, fonts, fontInfoCache) {
+    // Group modified items by page
+    const byPage = {};
     for (const item of textItems) {
-        const isMoved = item.moveOffsetX !== 0 || item.moveOffsetY !== 0;
-        const hasOverrides = item.fontWeightOverride || item.fontStyleOverride ||
-                             item.fontSizeOverride || item.textColorOverride;
-        if (item.deleted || item.currentText !== item.originalText || isMoved || hasOverrides) {
-            if (!pageTexts[item.pageNum]) pageTexts[item.pageNum] = [];
-            pageTexts[item.pageNum].push(item);
-        }
+        const isModified = item.deleted ||
+            item.currentText !== item.originalText ||
+            item.moveOffsetX !== 0 || item.moveOffsetY !== 0 ||
+            item.fontWeightOverride || item.fontStyleOverride ||
+            item.fontSizeOverride || item.textColorOverride;
+        if (!isModified) continue;
+        if (!byPage[item.pageNum]) byPage[item.pageNum] = [];
+        byPage[item.pageNum].push(item);
     }
 
-    for (const [pageNum, items] of Object.entries(pageTexts)) {
+    for (const [pageNum, items] of Object.entries(byPage)) {
         const page = pages[parseInt(pageNum) - 1];
 
         for (const item of items) {
-            const origX = item.transform[4];
-            const origY = item.transform[5];
-            const origFontSize = Math.sqrt(item.transform[0] ** 2 + item.transform[1] ** 2);
-            const fontSize = item.fontSizeOverride ? item.fontSizeOverride / item.scale : origFontSize;
-            const moveX = (item.moveOffsetX || 0) / item.scale;
-            const moveY = -(item.moveOffsetY || 0) / item.scale;
-            const newX = origX + moveX;
-            const newY = origY + moveY;
+            // Original position and size in PDF coordinates
+            const pdfX = item.transform[4];
+            const pdfY = item.transform[5];
+            const pdfFontSize = Math.sqrt(item.transform[0] ** 2 + item.transform[1] ** 2);
+
+            // Apply font size override (stored in canvas pixels, convert to PDF points)
+            const fontSize = item.fontSizeOverride
+                ? item.fontSizeOverride / item.scale
+                : pdfFontSize;
+
+            // Convert drag offset from screen pixels to PDF points
+            // Note: Y is negated because PDF Y goes up, screen Y goes down
+            const dragOffsetX = (item.moveOffsetX || 0) / item.scale;
+            const dragOffsetY = -(item.moveOffsetY || 0) / item.scale;
+            const newX = pdfX + dragOffsetX;
+            const newY = pdfY + dragOffsetY;
 
             const cleanText = item.currentText.replace(/[\r\n]/g, ' ');
             const fallbackFont = getFallbackFont(item, fonts);
             const newTextWidth = fallbackFont.widthOfTextAtSize(cleanText, fontSize);
-            const coverWidth = Math.max(item.width, newTextWidth) + 6;
-            const bg = item.bgColor || { r: 1, g: 1, b: 1 };
+            const coverWidth = Math.max(item.width, newTextWidth) + PDF_COVER_WIDTH_PADDING;
+            const bgColor = item.bgColor || { r: 1, g: 1, b: 1 };
 
-            // Cover original position
+            // Cover original text position with a background-colored rectangle
             page.drawRectangle({
-                x: origX - 2,
-                y: origY - (origFontSize * 0.3),
+                x: pdfX - PDF_COVER_X_OFFSET,
+                y: pdfY - (pdfFontSize * PDF_COVER_BOTTOM_EXTEND),
                 width: coverWidth,
-                height: origFontSize * 1.4,
-                color: PDFLib.rgb(bg.r, bg.g, bg.b),
+                height: pdfFontSize * PDF_COVER_HEIGHT_SCALE,
+                color: PDFLib.rgb(bgColor.r, bgColor.g, bgColor.b),
             });
 
             if (item.deleted) continue;
 
-            // Try to use original font via CMap encoding
-            const hasStyleOverride = item.fontWeightOverride || item.fontStyleOverride;
-            const fontInfo = hasStyleOverride ? null : await getFontInfo(pdfLibDoc, page, item.fontName, fontInfoCache);
-            const tc = item.textColorOverride || item.textColor || { r: 0, g: 0, b: 0 };
+            const textColor = item.textColorOverride || item.textColor || { r: 0, g: 0, b: 0 };
 
-            if (fontInfo && tryDrawWithOriginalFont(pdfLibDoc, page, fontInfo, cleanText, fontSize, newX, newY, tc)) {
-                continue;
+            // Try original font first (only if no style overrides, since we can't
+            // change the weight/style of the embedded PDF font)
+            const hasStyleOverride = item.fontWeightOverride || item.fontStyleOverride;
+            if (!hasStyleOverride) {
+                const fontInfo = await getFontInfo(doc, page, item.fontName, fontInfoCache);
+                if (fontInfo && tryDrawWithOriginalFont(doc, page, fontInfo, cleanText, fontSize, newX, newY, textColor)) {
+                    continue;
+                }
             }
 
             // Fallback: draw with standard font
@@ -132,50 +165,65 @@ async function processModifiedText(pdfLibDoc, pages, textItems, fonts, fontInfoC
                 x: newX, y: newY,
                 size: fontSize,
                 font: fallbackFont,
-                color: PDFLib.rgb(tc.r, tc.g, tc.b),
+                color: PDFLib.rgb(textColor.r, textColor.g, textColor.b),
             });
         }
     }
 }
 
-function tryDrawWithOriginalFont(pdfLibDoc, page, fontInfo, text, fontSize, x, y, tc) {
+/**
+ * Try to draw text using the original PDF font by encoding characters as hex glyph IDs.
+ * Returns true if successful, false if any character can't be mapped.
+ *
+ * The PDF content stream format is:
+ *   q BT                    — save state, begin text
+ *   r g b rg                — set fill color
+ *   /FontName size Tf       — set font
+ *   x y Td                  — move to position
+ *   <hex> Tj                — draw text using hex-encoded glyph IDs
+ *   ET Q                    — end text, restore state
+ */
+function tryDrawWithOriginalFont(doc, page, fontInfo, text, fontSize, x, y, color) {
     const hexChars = [];
     for (const ch of text) {
-        const glyph = fontInfo.unicodeToGlyph[ch.codePointAt(0)];
-        if (!glyph) return false;
-        hexChars.push(glyph);
+        const glyphHex = fontInfo.unicodeToGlyph[ch.codePointAt(0)];
+        if (!glyphHex) return false;
+        hexChars.push(glyphHex);
     }
     if (hexChars.length === 0) return false;
 
     const hexString = hexChars.join('');
-    const content = `q\nBT\n${tc.r} ${tc.g} ${tc.b} rg\n/${fontInfo.pdfFontName} ${fontSize} Tf\n${x} ${y} Td\n<${hexString}> Tj\nET\nQ\n`;
-    addContentStream(pdfLibDoc, page, content);
+    const content = `q\nBT\n${color.r} ${color.g} ${color.b} rg\n` +
+        `/${fontInfo.pdfFontName} ${fontSize} Tf\n` +
+        `${x} ${y} Td\n<${hexString}> Tj\nET\nQ\n`;
+    addContentStream(doc, page, content);
     return true;
 }
 
 // ============================================
 // Process imported images
 // ============================================
-async function processImportedImages(pdfLibDoc, pages, imageItems) {
+async function processImportedImages(doc, pages, imageItems) {
     const imported = imageItems.filter(img => img.type === 'imported-image' && !img.deleted);
     for (const img of imported) {
         const page = pages[img.pageNum - 1];
         const pageHeight = page.getHeight();
 
         const embeddedImage = img.importedImageType === 'image/png'
-            ? await pdfLibDoc.embedPng(img.importedImageBytes)
-            : await pdfLibDoc.embedJpg(img.importedImageBytes);
+            ? await doc.embedPng(img.importedImageBytes)
+            : await doc.embedJpg(img.importedImageBytes);
 
-        const finalLeft = img.cssLeft + img.moveOffsetX;
-        const finalTop = img.cssTop + img.moveOffsetY;
-        const finalW = img.resizedWidth || img.cssWidth;
-        const finalH = img.resizedHeight || img.cssHeight;
+        // Final position = original placement + any drag offset
+        const finalCssLeft = img.cssLeft + img.moveOffsetX;
+        const finalCssTop = img.cssTop + img.moveOffsetY;
+        const finalWidth = img.resizedWidth || img.cssWidth;
+        const finalHeight = img.resizedHeight || img.cssHeight;
 
         page.drawImage(embeddedImage, {
-            x: finalLeft / img.scale,
-            y: pageHeight - (finalTop + finalH) / img.scale,
-            width: finalW / img.scale,
-            height: finalH / img.scale,
+            x: finalCssLeft / img.scale,
+            y: pageHeight - (finalCssTop + finalHeight) / img.scale,
+            width: finalWidth / img.scale,
+            height: finalHeight / img.scale,
         });
     }
 }
@@ -183,14 +231,14 @@ async function processImportedImages(pdfLibDoc, pages, imageItems) {
 // ============================================
 // Process moved/resized/deleted existing images
 // ============================================
-function processMovedImages(pdfLibDoc, pages, imageItems) {
-    const moved = imageItems.filter(img =>
+function processMovedImages(doc, pages, imageItems) {
+    const modified = imageItems.filter(img =>
         img.type !== 'imported-image' &&
         (img.deleted || img.moveOffsetX !== 0 || img.moveOffsetY !== 0 || img.resizedWidth || img.resizedHeight)
     );
 
     const byPage = {};
-    for (const img of moved) {
+    for (const img of modified) {
         if (!byPage[img.pageNum]) byPage[img.pageNum] = [];
         byPage[img.pageNum].push(img);
     }
@@ -199,95 +247,114 @@ function processMovedImages(pdfLibDoc, pages, imageItems) {
         const page = pages[parseInt(pageNum) - 1];
 
         for (const img of items) {
-            const bg = img.bgColor || { r: 1, g: 1, b: 1 };
+            const bgColor = img.bgColor || { r: 1, g: 1, b: 1 };
             const pageHeight = page.getHeight();
-            const origX = img.cssLeft / img.scale;
-            const origY = pageHeight - (img.cssTop + img.cssHeight) / img.scale;
-            const pdfW = img.cssWidth / img.scale;
-            const pdfH = img.cssHeight / img.scale;
+
+            // Convert original position from canvas pixels to PDF coordinates
+            const pdfX = img.cssLeft / img.scale;
+            const pdfY = pageHeight - (img.cssTop + img.cssHeight) / img.scale;
+            const pdfWidth = img.cssWidth / img.scale;
+            const pdfHeight = img.cssHeight / img.scale;
 
             // Cover original position
             page.drawRectangle({
-                x: origX, y: origY, width: pdfW, height: pdfH,
-                color: PDFLib.rgb(bg.r, bg.g, bg.b),
+                x: pdfX, y: pdfY, width: pdfWidth, height: pdfHeight,
+                color: PDFLib.rgb(bgColor.r, bgColor.g, bgColor.b),
             });
 
             if (img.deleted) continue;
 
-            // Redraw at new position
-            const newPdfW = img.resizedWidth ? img.resizedWidth / img.scale : pdfW;
-            const newPdfH = img.resizedHeight ? img.resizedHeight / img.scale : pdfH;
-            const newX = origX + img.moveOffsetX / img.scale;
-            const newY = origY - img.moveOffsetY / img.scale;
+            // Redraw at new position/size using a PDF content stream:
+            //   q → save state, cm → set transform matrix, Do → draw XObject, Q → restore
+            const newWidth = img.resizedWidth ? img.resizedWidth / img.scale : pdfWidth;
+            const newHeight = img.resizedHeight ? img.resizedHeight / img.scale : pdfHeight;
+            const newX = pdfX + img.moveOffsetX / img.scale;
+            const newY = pdfY - img.moveOffsetY / img.scale;
 
-            const imgRefName = findImageXObjectName(page, pdfLibDoc, img.imageSeqIndex);
-            if (imgRefName) {
-                addContentStream(pdfLibDoc, page,
-                    `q\n${newPdfW} 0 0 ${newPdfH} ${newX} ${newY} cm\n/${imgRefName} Do\nQ\n`);
+            const xObjectName = findImageXObjectName(page, doc, img.imageSeqIndex);
+            if (xObjectName) {
+                addContentStream(doc, page,
+                    `q\n${newWidth} 0 0 ${newHeight} ${newX} ${newY} cm\n/${xObjectName} Do\nQ\n`);
             }
         }
     }
 }
 
 // ============================================
-// PDF utilities
+// PDF low-level utilities
 // ============================================
-function addContentStream(pdfLibDoc, page, content) {
+
+/** Append a raw content stream to a page (for drawing with original fonts or images). */
+function addContentStream(doc, page, content) {
     const bytes = new TextEncoder().encode(content);
-    const stream = pdfLibDoc.context.stream(bytes);
-    const ref = pdfLibDoc.context.register(stream);
+    const stream = doc.context.stream(bytes);
+    const ref = doc.context.register(stream);
     page.node.addContentStream(ref);
 }
 
-function findImageXObjectName(page, pdfLibDoc, seqIndex) {
+/**
+ * Find the PDF XObject name for an image by its sequential index on the page.
+ * The sequential index matches the order images appear in the PDF operator list
+ * (the same order PDF.js processes them during rendering).
+ */
+function findImageXObjectName(page, doc, seqIndex) {
     try {
         const resources = page.node.Resources();
         if (!resources) return null;
-        const xObjRef = resources.get(PDFLib.PDFName.of('XObject'));
-        if (!xObjRef) return null;
-        const xObjDict = xObjRef instanceof PDFLib.PDFDict
-            ? xObjRef : pdfLibDoc.context.lookup(xObjRef);
-        if (!xObjDict) return null;
+        const xObjectRef = resources.get(PDFLib.PDFName.of('XObject'));
+        if (!xObjectRef) return null;
+        const xObjectDict = xObjectRef instanceof PDFLib.PDFDict
+            ? xObjectRef : doc.context.lookup(xObjectRef);
+        if (!xObjectDict) return null;
 
         const imageNames = [];
-        for (const [name, ref] of xObjDict.entries()) {
+        for (const [name, ref] of xObjectDict.entries()) {
             const nameStr = name.decodeText ? name.decodeText() : name.toString().replace('/', '');
-            const obj = pdfLibDoc.context.lookup(ref);
-            if (obj) {
-                const subtypeRef = obj.dict
-                    ? obj.dict.get(PDFLib.PDFName.of('Subtype'))
-                    : (obj.get ? obj.get(PDFLib.PDFName.of('Subtype')) : null);
-                if (subtypeRef && subtypeRef.toString() === '/Image') {
-                    imageNames.push(nameStr);
-                }
+            const obj = doc.context.lookup(ref);
+            if (!obj) continue;
+            const subtype = obj.dict
+                ? obj.dict.get(PDFLib.PDFName.of('Subtype'))
+                : obj.get?.(PDFLib.PDFName.of('Subtype'));
+            if (subtype?.toString() === '/Image') {
+                imageNames.push(nameStr);
             }
         }
         return imageNames[seqIndex] || null;
-    } catch (e) {
+    } catch (_) {
         return null;
     }
 }
 
 // ============================================
-// CMap font info parsing
+// CMap font info — parse ToUnicode CMap for original font rendering
 // ============================================
-async function getFontInfo(pdfLibDoc, pageObj, pdjsFontName, cache) {
+
+/**
+ * Extract font info needed to re-draw text in its original PDF font.
+ * Returns { pdfFontName, unicodeToGlyph } or null if the font can't be resolved.
+ *
+ * PDF.js uses internal names like "g_d0_f1" where the trailing number maps to
+ * the font's position in the page's Font resource dictionary. We parse that index,
+ * then read the font's ToUnicode CMap to build a unicode→glyph hex mapping.
+ */
+async function getFontInfo(doc, page, pdjsFontName, cache) {
     if (cache[pdjsFontName] !== undefined) return cache[pdjsFontName];
 
     try {
-        const resources = pageObj.node.Resources();
+        const resources = page.node.Resources();
         if (!resources) throw new Error('no resources');
-        const fontDictObj = resources.get(PDFLib.PDFName.of('Font'));
-        if (!fontDictObj) throw new Error('no font dict');
-        const fontDict = fontDictObj instanceof PDFLib.PDFDict
-            ? fontDictObj : pdfLibDoc.context.lookup(fontDictObj);
+        const fontDictRef = resources.get(PDFLib.PDFName.of('Font'));
+        if (!fontDictRef) throw new Error('no font dict');
+        const fontDict = fontDictRef instanceof PDFLib.PDFDict
+            ? fontDictRef : doc.context.lookup(fontDictRef);
         if (!fontDict) throw new Error('cannot resolve font dict');
 
-        const fontNames = [];
-        fontDict.entries().forEach(([key]) => {
-            fontNames.push(key.decodeText ? key.decodeText() : key.toString().replace('/', ''));
-        });
+        // Get ordered list of font names from the dictionary
+        const fontNames = fontDict.entries().map(([key]) =>
+            key.decodeText ? key.decodeText() : key.toString().replace('/', '')
+        );
 
+        // PDF.js names fonts like "g_d0_f1" — extract the 1-based index
         const indexMatch = pdjsFontName.match(/f(\d+)$/);
         if (!indexMatch) throw new Error('cannot parse font index');
         const fontIndex = parseInt(indexMatch[1]) - 1;
@@ -296,13 +363,13 @@ async function getFontInfo(pdfLibDoc, pageObj, pdjsFontName, cache) {
         const pdfFontName = fontNames[fontIndex];
         const fontRef = fontDict.get(PDFLib.PDFName.of(pdfFontName));
         const fontObj = fontRef instanceof PDFLib.PDFDict
-            ? fontRef : pdfLibDoc.context.lookup(fontRef);
+            ? fontRef : doc.context.lookup(fontRef);
         if (!fontObj) throw new Error('cannot resolve font');
 
+        // Get the ToUnicode CMap (maps glyph codes ↔ Unicode code points)
         const toUnicodeRef = fontObj.get(PDFLib.PDFName.of('ToUnicode'));
         if (!toUnicodeRef) throw new Error('no ToUnicode CMap');
-
-        const toUnicodeStream = pdfLibDoc.context.lookup(toUnicodeRef) || toUnicodeRef;
+        const toUnicodeStream = doc.context.lookup(toUnicodeRef) || toUnicodeRef;
         if (!toUnicodeStream) throw new Error('cannot resolve ToUnicode');
 
         let cmapBytes = toUnicodeStream.decodeContents?.() ||
@@ -311,7 +378,8 @@ async function getFontInfo(pdfLibDoc, pageObj, pdjsFontName, cache) {
                         toUnicodeStream.contents;
         if (!cmapBytes) throw new Error('empty CMap');
 
-        if (cmapBytes[0] === 0x78) {
+        // Decompress if zlib-compressed (first byte 0x78 is the deflate header)
+        if (cmapBytes[0] === ZLIB_HEADER) {
             cmapBytes = await decompressZlib(cmapBytes);
         }
 
@@ -319,37 +387,47 @@ async function getFontInfo(pdfLibDoc, pageObj, pdjsFontName, cache) {
         const result = { pdfFontName, unicodeToGlyph };
         cache[pdjsFontName] = result;
         return result;
-    } catch (e) {
+    } catch (_) {
         cache[pdjsFontName] = null;
         return null;
     }
 }
 
+/**
+ * Parse an Adobe CMap to build a unicode→glyph hex mapping.
+ * CMaps contain two types of entries:
+ *   - beginbfchar/endbfchar: individual <glyphHex> <unicodeHex> pairs
+ *   - beginbfrange/endbfrange: <startGlyph> <endGlyph> <startUnicode> ranges
+ */
 function parseCMap(cmapText) {
     const unicodeToGlyph = {};
 
-    const bfcharRegex = /beginbfchar\s*([\s\S]*?)endbfchar/g;
-    let match;
-    while ((match = bfcharRegex.exec(cmapText)) !== null) {
-        const lineRegex = /<([0-9a-fA-F]+)>\s*<([0-9a-fA-F]+)>/g;
-        let lineMatch;
-        while ((lineMatch = lineRegex.exec(match[1])) !== null) {
-            unicodeToGlyph[parseInt(lineMatch[2], 16)] = lineMatch[1].toUpperCase();
+    // Parse individual char mappings: <glyphHex> <unicodeHex>
+    const charBlockRegex = /beginbfchar\s*([\s\S]*?)endbfchar/g;
+    let blockMatch;
+    while ((blockMatch = charBlockRegex.exec(cmapText)) !== null) {
+        const pairRegex = /<([0-9a-fA-F]+)>\s*<([0-9a-fA-F]+)>/g;
+        let pairMatch;
+        while ((pairMatch = pairRegex.exec(blockMatch[1])) !== null) {
+            const glyphHex = pairMatch[1].toUpperCase();
+            const unicodeCodePoint = parseInt(pairMatch[2], 16);
+            unicodeToGlyph[unicodeCodePoint] = glyphHex;
         }
     }
 
-    const bfrangeRegex = /beginbfrange\s*([\s\S]*?)endbfrange/g;
-    while ((match = bfrangeRegex.exec(cmapText)) !== null) {
-        const lineRegex = /<([0-9a-fA-F]+)>\s*<([0-9a-fA-F]+)>\s*<([0-9a-fA-F]+)>/g;
-        let lineMatch;
-        while ((lineMatch = lineRegex.exec(match[1])) !== null) {
-            const startGlyph = parseInt(lineMatch[1], 16);
-            const endGlyph = parseInt(lineMatch[2], 16);
-            const startUnicode = parseInt(lineMatch[3], 16);
-            const codeLen = lineMatch[1].length;
-            for (let g = startGlyph; g <= endGlyph; g++) {
-                unicodeToGlyph[startUnicode + (g - startGlyph)] =
-                    g.toString(16).padStart(codeLen, '0').toUpperCase();
+    // Parse range mappings: <startGlyph> <endGlyph> <startUnicode>
+    const rangeBlockRegex = /beginbfrange\s*([\s\S]*?)endbfrange/g;
+    while ((blockMatch = rangeBlockRegex.exec(cmapText)) !== null) {
+        const rangeRegex = /<([0-9a-fA-F]+)>\s*<([0-9a-fA-F]+)>\s*<([0-9a-fA-F]+)>/g;
+        let rangeMatch;
+        while ((rangeMatch = rangeRegex.exec(blockMatch[1])) !== null) {
+            const startGlyph = parseInt(rangeMatch[1], 16);
+            const endGlyph = parseInt(rangeMatch[2], 16);
+            const startUnicode = parseInt(rangeMatch[3], 16);
+            const hexDigits = rangeMatch[1].length;
+            for (let glyph = startGlyph; glyph <= endGlyph; glyph++) {
+                const unicodeCodePoint = startUnicode + (glyph - startGlyph);
+                unicodeToGlyph[unicodeCodePoint] = glyph.toString(16).padStart(hexDigits, '0').toUpperCase();
             }
         }
     }
@@ -357,6 +435,7 @@ function parseCMap(cmapText) {
     return unicodeToGlyph;
 }
 
+/** Decompress zlib/deflate data using the browser's DecompressionStream API. */
 async function decompressZlib(compressedBytes) {
     const ds = new DecompressionStream('deflate');
     const writer = ds.writable.getWriter();
@@ -369,7 +448,7 @@ async function decompressZlib(compressedBytes) {
         if (done) break;
         chunks.push(value);
     }
-    const totalLen = chunks.reduce((sum, c) => sum + c.length, 0);
+    const totalLen = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
     const result = new Uint8Array(totalLen);
     let offset = 0;
     for (const chunk of chunks) {
