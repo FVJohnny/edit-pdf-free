@@ -27,6 +27,9 @@ const redoBtn = document.getElementById('redoBtn');
 const addTextBtn = document.getElementById('addTextBtn');
 const importImageBtn = document.getElementById('importImageBtn');
 const imageInput = document.getElementById('imageInput');
+const zoomInBtn = document.getElementById('zoomInBtn');
+const zoomOutBtn = document.getElementById('zoomOutBtn');
+const zoomLabel = document.getElementById('zoomLabel');
 
 // ============================================
 // Undo / Redo
@@ -350,6 +353,40 @@ function scaleToFit(width, height, maxWidth, maxHeight) {
     }
     return { width, height };
 }
+
+// ============================================
+// Zoom
+// ============================================
+const ZOOM_STEP = 0.1;
+const ZOOM_MIN = 0.25;
+const ZOOM_MAX = 3;
+let currentZoom = 1;
+
+function applyZoom() {
+    zoomLabel.textContent = Math.round(currentZoom * 100) + '%';
+    const pages = pdfViewer.querySelectorAll(':scope > div');
+    for (const page of pages) {
+        page.style.transformOrigin = 'top center';
+        page.style.transform = currentZoom === 1 ? '' : `scale(${currentZoom})`;
+        // Adjust margin to account for scaled size so pages don't overlap
+        const canvas = page.querySelector('canvas');
+        if (canvas) {
+            const scaledHeight = canvas.height * currentZoom;
+            const originalHeight = canvas.height;
+            page.style.marginBottom = (scaledHeight - originalHeight + 20) + 'px';
+        }
+    }
+}
+
+zoomInBtn.addEventListener('click', () => {
+    currentZoom = Math.min(ZOOM_MAX, Math.round((currentZoom + ZOOM_STEP) * 10) / 10);
+    applyZoom();
+});
+
+zoomOutBtn.addEventListener('click', () => {
+    currentZoom = Math.max(ZOOM_MIN, Math.round((currentZoom - ZOOM_STEP) * 10) / 10);
+    applyZoom();
+});
 
 // ============================================
 // Save PDF

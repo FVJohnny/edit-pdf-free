@@ -251,6 +251,14 @@ body.drag-over-page::after {
     background: var(--border);
 }
 
+.pdf-tools-zoom {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    min-width: 40px;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+}
+
 .pdf-viewer.placement-mode {
     cursor: crosshair;
 }
