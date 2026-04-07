@@ -61,6 +61,9 @@ function applyFormat(textItem) {
         el.style.setProperty('--text-color', rgbToCss(textItem.textColorOverride));
     }
 
+    // Cover original canvas text so it doesn't show through the styled overlay
+    coverOriginalText(textItem, textItem.originalWidth);
+
     el.classList.add('modified');
     updateToolbarState(textItem);
 }

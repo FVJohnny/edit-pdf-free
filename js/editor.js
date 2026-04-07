@@ -1,5 +1,6 @@
 import { showFormatToolbar, hideFormatToolbar } from './toolbar.js';
 import { recordAction } from './history.js';
+import { coverOriginalText } from './utils/canvas.js';
 
 // ============================================
 // Make text editable inline
@@ -36,6 +37,7 @@ export function makeEditable(textItem) {
         const hasOverrides = textItem.fontWeightOverride || textItem.fontStyleOverride ||
                              textItem.fontSizeOverride || textItem.textColorOverride;
         if (textItem.currentText !== textItem.originalText || isMoved || hasOverrides) {
+            coverOriginalText(textItem, textItem.originalWidth);
             textItem.element.classList.add('modified');
             textItem.element.style.minWidth = textItem.originalWidth + 'px';
         } else {
