@@ -15,7 +15,14 @@ export function coverOriginalImage(imageItem) {
     if (imageItem.originalCovered) return;
     const ctx = imageItem.canvas.getContext('2d');
     ctx.fillStyle = rgbToCss(imageItem.bgColor);
-    ctx.fillRect(imageItem.cssLeft, imageItem.cssTop, imageItem.cssWidth, imageItem.cssHeight);
+    // Add 2px padding on each side to cover any sub-pixel edge artifacts
+    const pad = 2;
+    ctx.fillRect(
+        imageItem.cssLeft - pad,
+        imageItem.cssTop - pad,
+        imageItem.cssWidth + pad * 2,
+        imageItem.cssHeight + pad * 2
+    );
     imageItem.originalCovered = true;
 }
 

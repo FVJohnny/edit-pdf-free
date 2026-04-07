@@ -256,9 +256,11 @@ function processMovedImages(doc, pages, imageItems) {
             const pdfWidth = img.cssWidth / img.scale;
             const pdfHeight = img.cssHeight / img.scale;
 
-            // Cover original position
+            // Cover original position (with small padding to catch sub-pixel edges)
+            const pad = 2 / img.scale;
             page.drawRectangle({
-                x: pdfX, y: pdfY, width: pdfWidth, height: pdfHeight,
+                x: pdfX - pad, y: pdfY - pad,
+                width: pdfWidth + pad * 2, height: pdfHeight + pad * 2,
                 color: PDFLib.rgb(bgColor.r, bgColor.g, bgColor.b),
             });
 
