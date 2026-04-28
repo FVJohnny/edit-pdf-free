@@ -30,11 +30,17 @@ export async function renderPDF(pdfDoc, pdfViewer, textItems, imageItems) {
     textItems.length = 0;
     imageItems.length = 0;
 
+    // Available content width = viewer clientWidth minus its horizontal padding,
+    // and minus a small allowance for the page border (1px each side) so pages don't overflow.
+    const viewerStyle = getComputedStyle(pdfViewer);
+    const horizontalPadding = parseFloat(viewerStyle.paddingLeft) + parseFloat(viewerStyle.paddingRight);
+    const availableWidth = pdfViewer.clientWidth - horizontalPadding - 2;
+
     for (let pageNum = 1; pageNum <= pdfDoc.numPages; pageNum++) {
         const page = await pdfDoc.getPage(pageNum);
-        // Scale the page to fill the viewer width
+        // Scale the page to fill the available width inside the viewer
         const unscaledViewport = page.getViewport({ scale: 1 });
-        const scale = pdfViewer.clientWidth / unscaledViewport.width;
+        const scale = availableWidth / unscaledViewport.width;
         const viewport = page.getViewport({ scale });
 
         const canvas = document.createElement('canvas');
@@ -72,6 +78,39 @@ export async function renderPDF(pdfDoc, pdfViewer, textItems, imageItems) {
         pageContainer.appendChild(textLayerDiv);
         pdfViewer.appendChild(pageContainer);
     }
+}
+
+/**
+ * Create a blank page DOM container (white canvas) sized to match an existing page.
+ * Used for blank pages added before/after the original PDF pages.
+ * Also creates an empty text layer so add-text and import-image can target it.
+ */
+export function createBlankPageContainer(width, height) {
+    const container = document.createElement('div');
+    container.style.position = 'relative';
+    container.style.marginBottom = '20px';
+    container.dataset.blankPage = 'true';
+
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    canvas.className = 'pdf-page';
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, width, height);
+    container.appendChild(canvas);
+
+    const textLayer = document.createElement('div');
+    textLayer.className = 'custom-text-layer';
+    textLayer.style.position = 'absolute';
+    textLayer.style.left = '0';
+    textLayer.style.top = '0';
+    textLayer.style.width = width + 'px';
+    textLayer.style.height = height + 'px';
+    textLayer.style.pointerEvents = 'none';
+    container.appendChild(textLayer);
+
+    return container;
 }
 
 function createTextLayerDiv(viewport) {

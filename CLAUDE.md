@@ -90,9 +90,15 @@ Use the MCP Chrome tools (`mcp__chrome__*`) to test features in the browser. Lau
    - **Resize** — Hover over an image to reveal resize handles (red corner dots, edge cursors). Drag a corner or edge to resize. Verify the image scales and the original position is covered.
    - **Shift+Resize (aspect ratio lock)** — Hold Shift while dragging any resize handle. Verify the image maintains its original aspect ratio throughout the resize. Test with both corner and edge handles.
 
-6. **Save PDF** — Click "Save PDF", enter a filename, and confirm. Intercept or download the generated PDF.
+6. **Add blank pages** — Click "Page Before" to insert a blank page at the beginning, then "Page After" to add one at the end. Verify:
+   - Each new page appears in the viewer at the right position with white background.
+   - Page dimensions match the adjacent original page.
+   - You can place text and import images on a blank page (test at least one).
+   - Undo/redo correctly removes/re-adds the blank pages.
 
-7. **Verify saved PDF** — Re-load the saved PDF back into the editor (or open in a new tab). Check:
+7. **Save PDF** — Click "Save PDF", enter a filename, and confirm. Intercept or download the generated PDF.
+
+8. **Verify saved PDF** — Re-load the saved PDF back into the editor (or open in a new tab). Check:
    - **Cover rects** — The original positions of moved/edited text are cleanly covered with the correct background color. The cover rects should NOT bleed over adjacent text or graphics.
    - **New text placement** — Edited and moved texts appear at their expected positions.
    - **Font fidelity** — Text that wasn't changed in style should use the original PDF font (via CMap encoding). Text with style overrides should use the correct fallback font (Helvetica/Times/Courier family).
@@ -102,6 +108,7 @@ Use the MCP Chrome tools (`mcp__chrome__*`) to test features in the browser. Lau
    - **Moved images** — Images that were dragged appear at their new positions in the saved PDF. The original positions are cleanly covered.
    - **Resized images** — Images that were resized appear at their new dimensions in the saved PDF.
    - **Unmodified content** — Text and images that were NOT edited should be completely unchanged — no artifacts, no cover rects, no font substitution.
+   - **Inserted blank pages** — Pages added before/after appear in the saved PDF in the correct order with the right dimensions, and any content placed on them is preserved.
 
 ### Quick smoke test
 

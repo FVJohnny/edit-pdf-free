@@ -1,5 +1,5 @@
 import { initDragDrop, showToast } from './ui.js';
-import { renderPDF, setupImageDrag, setupTextDrag } from './renderer.js';
+import { renderPDF, setupImageDrag, setupTextDrag, createBlankPageContainer } from './renderer.js';
 import { makeEditable } from './editor.js';
 import { savePDF } from './saver.js';
 import { undo, redo, onHistoryChange, clearHistory, recordAction } from './history.js';
@@ -13,6 +13,7 @@ let pdfDoc = null;
 let pdfBytes = null;
 let textItems = [];
 let imageItems = [];
+let addedPages = []; // [{ position: 'start'|'end', width, height, container }]
 let originalFileName = '';
 
 const pdfInput = document.getElementById('pdfInput');
@@ -32,6 +33,9 @@ const imageInput = document.getElementById('imageInput');
 const zoomInBtn = document.getElementById('zoomInBtn');
 const zoomOutBtn = document.getElementById('zoomOutBtn');
 const zoomLabel = document.getElementById('zoomLabel');
+const addPageBeforeBtn = document.getElementById('addPageBeforeBtn');
+const addPageAfterBtn = document.getElementById('addPageAfterBtn');
+const pageIndicator = document.getElementById('pageIndicator');
 
 // ============================================
 // Undo / Redo
@@ -128,7 +132,9 @@ async function loadPDF(file) {
         saveBtn.disabled = false;
 
         clearHistory();
+        addedPages.length = 0;
         await renderPDF(pdfDoc, pdfViewer, textItems, imageItems);
+        updatePageIndicator();
     } catch (error) {
         console.error('Error loading PDF:', error);
         alert('Error loading PDF file. Please try another file.');
@@ -149,7 +155,7 @@ addTextBtn.addEventListener('click', () => {
     }
 });
 
-pdfViewer.addEventListener('click', (e) => {
+pdfViewer.addEventListener('click', async (e) => {
     if (!addTextMode) return;
 
     // Find which page container was clicked
@@ -179,7 +185,26 @@ pdfViewer.addEventListener('click', (e) => {
     const canvasY = cssTop * scale;
 
     const defaultFontSize = 16;
-    const pdfScale = canvas.width / 612; // approximate viewport.scale (letter width = 612pt)
+    // PDF-to-canvas scale: derive from the page's PDF width when available,
+    // falling back to letter-width (612pt) for legacy paths.
+    let pdfWidthPts = 612;
+    if (targetPage.dataset.blankPage === 'true') {
+        pdfWidthPts = parseFloat(targetPage.dataset.pdfWidth) || 612;
+    } else if (pdfDoc) {
+        try {
+            // Map DOM index → original PDF page number by counting non-blank containers up to target.
+            const containers = Array.from(pdfViewer.querySelectorAll(':scope > div'));
+            let originalIdx = -1;
+            for (let i = 0; i <= containers.indexOf(targetPage); i++) {
+                if (containers[i].dataset.blankPage !== 'true') originalIdx++;
+            }
+            if (originalIdx >= 0 && originalIdx < pdfDoc.numPages) {
+                const pdfPage = await pdfDoc.getPage(originalIdx + 1);
+                pdfWidthPts = pdfPage.getViewport({ scale: 1 }).width;
+            }
+        } catch (_) {}
+    }
+    const pdfScale = canvas.width / pdfWidthPts;
 
     const span = document.createElement('span');
     span.textContent = 'New text';
@@ -284,9 +309,15 @@ async function importImage(file) {
     const cssLeft = (canvas.width - imgWidth) / 2;
     const cssTop = Math.max(10, visibleTopOnPage + 20);
 
-    // Compute scale factor (canvas pixels per PDF point) — same as renderPDF uses
-    const pdfPage = await pdfDoc.getPage(pageNum);
-    const scale = canvas.width / pdfPage.getViewport({ scale: 1 }).width;
+    // Compute scale factor (canvas pixels per PDF point). For original pages, derive
+    // from the underlying PDF page; for blank pages, use the dimensions stored on the container.
+    let scale;
+    if (targetPage.dataset.blankPage === 'true') {
+        scale = canvas.width / parseFloat(targetPage.dataset.pdfWidth);
+    } else {
+        const pdfPage = await pdfDoc.getPage(pageNum);
+        scale = canvas.width / pdfPage.getViewport({ scale: 1 }).width;
+    }
 
     // Create the draggable overlay
     const overlay = document.createElement('div');
@@ -381,6 +412,33 @@ function scaleToFit(width, height, maxWidth, maxHeight) {
 }
 
 // ============================================
+// Page indicator (current / total)
+// ============================================
+function updatePageIndicator() {
+    const containers = pdfViewer.querySelectorAll(':scope > div');
+    const total = containers.length;
+    if (total === 0) {
+        pageIndicator.textContent = 'Page 0 / 0';
+        return;
+    }
+    // Pick the page whose vertical midpoint is closest to the viewer's midpoint.
+    const viewerRect = pdfViewer.getBoundingClientRect();
+    const viewerMidY = viewerRect.top + viewerRect.height / 2;
+    let bestIdx = 0;
+    let bestDist = Infinity;
+    for (let i = 0; i < total; i++) {
+        const r = containers[i].getBoundingClientRect();
+        const mid = r.top + r.height / 2;
+        const dist = Math.abs(mid - viewerMidY);
+        if (dist < bestDist) { bestDist = dist; bestIdx = i; }
+    }
+    pageIndicator.textContent = `Page ${bestIdx + 1} / ${total}`;
+}
+
+pdfViewer.addEventListener('scroll', updatePageIndicator);
+window.addEventListener('resize', updatePageIndicator);
+
+// ============================================
 // Zoom
 // ============================================
 const ZOOM_STEP = 0.1;
@@ -415,8 +473,84 @@ zoomOutBtn.addEventListener('click', () => {
 });
 
 // ============================================
+// Add blank page
+// ============================================
+async function addBlankPage(position) {
+    // Reference an existing page to inherit dimensions. Prefer first page for 'start',
+    // last page for 'end'. Use the original PDF page (not a previously-added blank)
+    // so dimensions match the document.
+    if (!pdfDoc || pdfDoc.numPages === 0) return;
+    const refPageNum = position === 'start' ? 1 : pdfDoc.numPages;
+    const refPdfPage = await pdfDoc.getPage(refPageNum);
+    const refViewport = refPdfPage.getViewport({ scale: 1 });
+    const pdfWidth = refViewport.width;
+    const pdfHeight = refViewport.height;
+
+    // Match the canvas size of the original pages (rendered at viewer's available content width)
+    const viewerStyle = getComputedStyle(pdfViewer);
+    const horizontalPadding = parseFloat(viewerStyle.paddingLeft) + parseFloat(viewerStyle.paddingRight);
+    const availableWidth = pdfViewer.clientWidth - horizontalPadding - 2;
+    const canvasScale = availableWidth / pdfWidth;
+    const canvasWidth = pdfWidth * canvasScale;
+    const canvasHeight = pdfHeight * canvasScale;
+
+    const container = createBlankPageContainer(canvasWidth, canvasHeight);
+    container.dataset.pdfWidth = String(pdfWidth);
+    container.dataset.pdfHeight = String(pdfHeight);
+    const entry = { position, pdfWidth, pdfHeight, container };
+
+    if (position === 'start') {
+        pdfViewer.insertBefore(container, pdfViewer.firstChild);
+        addedPages.unshift(entry);
+    } else {
+        pdfViewer.appendChild(container);
+        addedPages.push(entry);
+    }
+    applyZoom();
+    updatePageIndicator();
+
+    recordAction({
+        undo() {
+            container.remove();
+            const idx = addedPages.indexOf(entry);
+            if (idx !== -1) addedPages.splice(idx, 1);
+            applyZoom();
+            updatePageIndicator();
+        },
+        redo() {
+            if (entry.position === 'start') {
+                pdfViewer.insertBefore(container, pdfViewer.firstChild);
+                addedPages.unshift(entry);
+            } else {
+                pdfViewer.appendChild(container);
+                addedPages.push(entry);
+            }
+            applyZoom();
+            updatePageIndicator();
+        },
+    });
+
+    container.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    showToast(position === 'start' ? 'Blank page added at the beginning' : 'Blank page added at the end');
+}
+
+addPageBeforeBtn.addEventListener('click', () => addBlankPage('start'));
+addPageAfterBtn.addEventListener('click', () => addBlankPage('end'));
+
+// ============================================
 // Save PDF
 // ============================================
 saveBtn.addEventListener('click', () => {
-    savePDF(pdfBytes, textItems, imageItems, originalFileName);
+    // Resolve each item's final page index (0-based) from its canvas's container
+    // position in the viewer. This handles items that were added on blank pages
+    // and shifts caused by added-before-start blanks.
+    const pageContainers = Array.from(pdfViewer.querySelectorAll(':scope > div'));
+    const containerIndex = (item) => {
+        const c = item.canvas?.parentElement;
+        return c ? pageContainers.indexOf(c) : -1;
+    };
+    for (const item of textItems) item.finalPageIndex = containerIndex(item);
+    for (const item of imageItems) item.finalPageIndex = containerIndex(item);
+
+    savePDF(pdfBytes, textItems, imageItems, addedPages, originalFileName);
 });

@@ -259,6 +259,13 @@ body.drag-over-page::after {
     font-variant-numeric: tabular-nums;
 }
 
+.pdf-tools-pages {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+    padding: 0 6px;
+}
+
 .pdf-viewer.placement-mode {
     cursor: crosshair;
 }

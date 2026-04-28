@@ -22,7 +22,7 @@ import {
 // ============================================
 // Save modified PDF
 // ============================================
-export async function savePDF(pdfBytes, textItems, imageItems, originalFileName) {
+export async function savePDF(pdfBytes, textItems, imageItems, addedPages, originalFileName) {
     try {
         if (typeof PDFLib === 'undefined') {
             alert('PDF library is still loading. Please wait a moment and try again.');
@@ -31,14 +31,29 @@ export async function savePDF(pdfBytes, textItems, imageItems, originalFileName)
 
         const doc = await PDFLib.PDFDocument.load(pdfBytes);
         if (typeof fontkit !== 'undefined') doc.registerFontkit(fontkit);
+
+        // Insert blank pages added at the start (in original order so the first added
+        // ends up at index 0). Pages are inserted at index 0 in reverse to preserve order.
+        const startPages = (addedPages || []).filter(p => p.position === 'start');
+        const endPages = (addedPages || []).filter(p => p.position === 'end');
+        for (let i = startPages.length - 1; i >= 0; i--) {
+            doc.insertPage(0, [startPages[i].pdfWidth, startPages[i].pdfHeight]);
+        }
+        for (const p of endPages) {
+            doc.addPage([p.pdfWidth, p.pdfHeight]);
+        }
+
+        // Items use finalPageIndex (0-based) which already accounts for blank pages.
+        // Fall back to pageNum-based indexing (offset by startCount) for items without it.
         const pages = doc.getPages();
+        const startCount = startPages.length;
 
         const fonts = await embedStandardFonts(doc);
         const fontInfoCache = {};
 
-        await processModifiedText(doc, pages, textItems, fonts, fontInfoCache);
-        await processImportedImages(doc, pages, imageItems);
-        processMovedImages(doc, pages, imageItems);
+        await processModifiedText(doc, pages, textItems, fonts, fontInfoCache, startCount);
+        await processImportedImages(doc, pages, imageItems, startCount);
+        processMovedImages(doc, pages, imageItems, startCount);
 
         const modifiedPdfBytes = await doc.save();
         await downloadPdf(modifiedPdfBytes, originalFileName);
@@ -96,8 +111,8 @@ function getFallbackFont(item, fonts) {
 // ============================================
 // Process modified text items
 // ============================================
-async function processModifiedText(doc, pages, textItems, fonts, fontInfoCache) {
-    // Group modified items by page
+async function processModifiedText(doc, pages, textItems, fonts, fontInfoCache, startCount = 0) {
+    // Group modified items by final page index (in the saved doc, 0-based).
     const byPage = {};
     for (const item of textItems) {
         const isModified = item.deleted ||
@@ -106,12 +121,16 @@ async function processModifiedText(doc, pages, textItems, fonts, fontInfoCache) 
             item.fontWeightOverride || item.fontStyleOverride ||
             item.fontSizeOverride || item.textColorOverride;
         if (!isModified) continue;
-        if (!byPage[item.pageNum]) byPage[item.pageNum] = [];
-        byPage[item.pageNum].push(item);
+        const pageIdx = item.finalPageIndex != null && item.finalPageIndex >= 0
+            ? item.finalPageIndex
+            : startCount + item.pageNum - 1;
+        if (!byPage[pageIdx]) byPage[pageIdx] = [];
+        byPage[pageIdx].push(item);
     }
 
-    for (const [pageNum, items] of Object.entries(byPage)) {
-        const page = pages[parseInt(pageNum) - 1];
+    for (const [pageIdx, items] of Object.entries(byPage)) {
+        const page = pages[parseInt(pageIdx)];
+        if (!page) continue;
 
         for (const item of items) {
             // Original position and size in PDF coordinates
@@ -261,10 +280,14 @@ function tryDrawWithOriginalFont(doc, page, fontInfo, text, fontSize, x, y, colo
 // ============================================
 // Process imported images
 // ============================================
-async function processImportedImages(doc, pages, imageItems) {
+async function processImportedImages(doc, pages, imageItems, startCount = 0) {
     const imported = imageItems.filter(img => img.type === 'imported-image' && !img.deleted);
     for (const img of imported) {
-        const page = pages[img.pageNum - 1];
+        const pageIdx = img.finalPageIndex != null && img.finalPageIndex >= 0
+            ? img.finalPageIndex
+            : startCount + img.pageNum - 1;
+        const page = pages[pageIdx];
+        if (!page) continue;
         const pageHeight = page.getHeight();
 
         const embeddedImage = img.importedImageType === 'image/png'
@@ -289,7 +312,7 @@ async function processImportedImages(doc, pages, imageItems) {
 // ============================================
 // Process moved/resized/deleted existing images
 // ============================================
-function processMovedImages(doc, pages, imageItems) {
+function processMovedImages(doc, pages, imageItems, startCount = 0) {
     const modified = imageItems.filter(img =>
         img.type !== 'imported-image' &&
         (img.deleted || img.moveOffsetX !== 0 || img.moveOffsetY !== 0 || img.resizedWidth || img.resizedHeight)
@@ -297,12 +320,16 @@ function processMovedImages(doc, pages, imageItems) {
 
     const byPage = {};
     for (const img of modified) {
-        if (!byPage[img.pageNum]) byPage[img.pageNum] = [];
-        byPage[img.pageNum].push(img);
+        const pageIdx = img.finalPageIndex != null && img.finalPageIndex >= 0
+            ? img.finalPageIndex
+            : startCount + img.pageNum - 1;
+        if (!byPage[pageIdx]) byPage[pageIdx] = [];
+        byPage[pageIdx].push(img);
     }
 
-    for (const [pageNum, items] of Object.entries(byPage)) {
-        const page = pages[parseInt(pageNum) - 1];
+    for (const [pageIdx, items] of Object.entries(byPage)) {
+        const page = pages[parseInt(pageIdx)];
+        if (!page) continue;
 
         for (const img of items) {
             const bgColor = img.bgColor || { r: 1, g: 1, b: 1 };
