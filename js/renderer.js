@@ -81,6 +81,42 @@ export async function renderPDF(pdfDoc, pdfViewer, textItems, imageItems) {
 }
 
 /**
+ * Render a single page from a PDF.js document into a new page container,
+ * matching the same width-fit logic used for original pages.
+ * Returns the container (caller appends it to the viewer).
+ */
+export async function renderMergedPage(pdfJsDoc, pageNum, availableWidth) {
+    const page = await pdfJsDoc.getPage(pageNum);
+    const unscaledViewport = page.getViewport({ scale: 1 });
+    const scale = availableWidth / unscaledViewport.width;
+    const viewport = page.getViewport({ scale });
+
+    const canvas = document.createElement('canvas');
+    canvas.width = viewport.width;
+    canvas.height = viewport.height;
+    canvas.className = 'pdf-page';
+    await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+
+    const container = document.createElement('div');
+    container.style.position = 'relative';
+    container.style.marginBottom = '20px';
+    container.dataset.mergedPage = 'true';
+    container.appendChild(canvas);
+
+    const textLayer = document.createElement('div');
+    textLayer.className = 'custom-text-layer';
+    textLayer.style.position = 'absolute';
+    textLayer.style.left = '0';
+    textLayer.style.top = '0';
+    textLayer.style.width = viewport.width + 'px';
+    textLayer.style.height = viewport.height + 'px';
+    textLayer.style.pointerEvents = 'none';
+    container.appendChild(textLayer);
+
+    return container;
+}
+
+/**
  * Create a blank page DOM container (white canvas) sized to match an existing page.
  * Used for blank pages added before/after the original PDF pages.
  * Also creates an empty text layer so add-text and import-image can target it.

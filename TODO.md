@@ -9,7 +9,7 @@ A small toolbar that appears above the PDF once loaded.
 - [x] **Undo / Redo** — Undo and redo all actions (Ctrl+Z / Ctrl+Shift+Z)
 - [x] **Zoom In / Zoom Out** — Control the PDF view zoom level
 - [x] **Add Page** — Insert a blank page at the beginning or end of the PDF
-- [ ] **Merge PDF** — Select another PDF file and append its pages after the current PDF
+- [x] **Merge PDF** — Select another PDF file and append its pages after the current PDF
 
 ## Image Toolbar
 

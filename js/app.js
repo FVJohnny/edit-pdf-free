@@ -1,5 +1,5 @@
 import { initDragDrop, showToast } from './ui.js';
-import { renderPDF, setupImageDrag, setupTextDrag, createBlankPageContainer } from './renderer.js';
+import { renderPDF, setupImageDrag, setupTextDrag, createBlankPageContainer, renderMergedPage } from './renderer.js';
 import { makeEditable } from './editor.js';
 import { savePDF } from './saver.js';
 import { undo, redo, onHistoryChange, clearHistory, recordAction } from './history.js';
@@ -14,6 +14,7 @@ let pdfBytes = null;
 let textItems = [];
 let imageItems = [];
 let addedPages = []; // [{ position: 'start'|'end', width, height, container }]
+let mergedPages = []; // [{ sourceBytes, sourceId, sourcePageIndex, container }]
 let originalFileName = '';
 
 const pdfInput = document.getElementById('pdfInput');
@@ -35,6 +36,8 @@ const zoomOutBtn = document.getElementById('zoomOutBtn');
 const zoomLabel = document.getElementById('zoomLabel');
 const addPageBeforeBtn = document.getElementById('addPageBeforeBtn');
 const addPageAfterBtn = document.getElementById('addPageAfterBtn');
+const mergePdfBtn = document.getElementById('mergePdfBtn');
+const mergePdfInput = document.getElementById('mergePdfInput');
 const pageIndicator = document.getElementById('pageIndicator');
 
 // ============================================
@@ -133,6 +136,7 @@ async function loadPDF(file) {
 
         clearHistory();
         addedPages.length = 0;
+        mergedPages.length = 0;
         await renderPDF(pdfDoc, pdfViewer, textItems, imageItems);
         updatePageIndicator();
     } catch (error) {
@@ -538,12 +542,88 @@ addPageBeforeBtn.addEventListener('click', () => addBlankPage('start'));
 addPageAfterBtn.addEventListener('click', () => addBlankPage('end'));
 
 // ============================================
+// Merge another PDF (append its pages after the current PDF)
+// ============================================
+mergePdfBtn.addEventListener('click', () => mergePdfInput.click());
+
+mergePdfInput.addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    mergePdfInput.value = '';
+    if (!file) return;
+    await mergePDFFile(file);
+});
+
+let mergeSourceCounter = 0;
+
+async function mergePDFFile(file) {
+    try {
+        const arrayBuffer = await file.arrayBuffer();
+        const sourceBytes = new Uint8Array(arrayBuffer);
+
+        // Open with PDF.js for rendering
+        const loadingTask = pdfjsLib.getDocument({ data: sourceBytes.slice() });
+        const sourceDoc = await loadingTask.promise;
+
+        // Compute available width once for all merged pages
+        const viewerStyle = getComputedStyle(pdfViewer);
+        const horizontalPadding = parseFloat(viewerStyle.paddingLeft) + parseFloat(viewerStyle.paddingRight);
+        const availableWidth = pdfViewer.clientWidth - horizontalPadding - 2;
+
+        const sourceId = `merge-${++mergeSourceCounter}`;
+        const newEntries = [];
+        for (let i = 1; i <= sourceDoc.numPages; i++) {
+            const container = await renderMergedPage(sourceDoc, i, availableWidth);
+            const entry = {
+                sourceBytes,
+                sourceId,
+                sourcePageIndex: i - 1, // 0-based for pdf-lib
+                container,
+            };
+            pdfViewer.appendChild(container);
+            mergedPages.push(entry);
+            newEntries.push(entry);
+        }
+
+        applyZoom();
+        updatePageIndicator();
+
+        const firstNew = newEntries[0]?.container;
+        if (firstNew) firstNew.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+        recordAction({
+            undo() {
+                for (const entry of newEntries) {
+                    entry.container.remove();
+                    const idx = mergedPages.indexOf(entry);
+                    if (idx !== -1) mergedPages.splice(idx, 1);
+                }
+                applyZoom();
+                updatePageIndicator();
+            },
+            redo() {
+                for (const entry of newEntries) {
+                    pdfViewer.appendChild(entry.container);
+                    mergedPages.push(entry);
+                }
+                applyZoom();
+                updatePageIndicator();
+            },
+        });
+
+        showToast(`Merged ${sourceDoc.numPages} page${sourceDoc.numPages === 1 ? '' : 's'} from ${file.name}`);
+    } catch (error) {
+        console.error('Error merging PDF:', error);
+        showToast('Could not merge that PDF. Please try another file.');
+    }
+}
+
+// ============================================
 // Save PDF
 // ============================================
 saveBtn.addEventListener('click', () => {
     // Resolve each item's final page index (0-based) from its canvas's container
-    // position in the viewer. This handles items that were added on blank pages
-    // and shifts caused by added-before-start blanks.
+    // position in the viewer. This handles items that were added on blank or
+    // merged pages and shifts caused by added-before-start blanks.
     const pageContainers = Array.from(pdfViewer.querySelectorAll(':scope > div'));
     const containerIndex = (item) => {
         const c = item.canvas?.parentElement;
@@ -552,5 +632,25 @@ saveBtn.addEventListener('click', () => {
     for (const item of textItems) item.finalPageIndex = containerIndex(item);
     for (const item of imageItems) item.finalPageIndex = containerIndex(item);
 
-    savePDF(pdfBytes, textItems, imageItems, addedPages, originalFileName);
+    // Walk the DOM in order to build the list of pages to add to the saved doc.
+    // Each entry is either a blank page (to insert) or a merged page (to copy).
+    // Original PDF pages are not included here — saver keeps them in place.
+    const startCount = addedPages.filter(p => p.position === 'start').length;
+    const trailingExtras = [];
+    for (let i = 0; i < pageContainers.length; i++) {
+        const container = pageContainers[i];
+        if (i < startCount) continue; // start blanks handled separately
+        if (container.dataset.blankPage === 'true') {
+            const entry = addedPages.find(p => p.container === container);
+            if (entry) trailingExtras.push({ kind: 'blank', entry });
+        } else if (container.dataset.mergedPage === 'true') {
+            const entry = mergedPages.find(p => p.container === container);
+            if (entry) trailingExtras.push({ kind: 'merged', entry });
+        }
+        // Original page containers are skipped — pdf-lib already has them.
+    }
+
+    const startBlanks = addedPages.filter(p => p.position === 'start');
+
+    savePDF(pdfBytes, textItems, imageItems, startBlanks, trailingExtras, originalFileName);
 });

@@ -22,7 +22,7 @@ import {
 // ============================================
 // Save modified PDF
 // ============================================
-export async function savePDF(pdfBytes, textItems, imageItems, addedPages, originalFileName) {
+export async function savePDF(pdfBytes, textItems, imageItems, startBlanks, trailingExtras, originalFileName) {
     try {
         if (typeof PDFLib === 'undefined') {
             alert('PDF library is still loading. Please wait a moment and try again.');
@@ -32,21 +32,36 @@ export async function savePDF(pdfBytes, textItems, imageItems, addedPages, origi
         const doc = await PDFLib.PDFDocument.load(pdfBytes);
         if (typeof fontkit !== 'undefined') doc.registerFontkit(fontkit);
 
-        // Insert blank pages added at the start (in original order so the first added
-        // ends up at index 0). Pages are inserted at index 0 in reverse to preserve order.
-        const startPages = (addedPages || []).filter(p => p.position === 'start');
-        const endPages = (addedPages || []).filter(p => p.position === 'end');
-        for (let i = startPages.length - 1; i >= 0; i--) {
-            doc.insertPage(0, [startPages[i].pdfWidth, startPages[i].pdfHeight]);
-        }
-        for (const p of endPages) {
-            doc.addPage([p.pdfWidth, p.pdfHeight]);
+        // Insert blank pages at the very start, in original order (the first one
+        // added ends up at index 0). We insert in reverse to preserve order.
+        const startList = startBlanks || [];
+        for (let i = startList.length - 1; i >= 0; i--) {
+            doc.insertPage(0, [startList[i].pdfWidth, startList[i].pdfHeight]);
         }
 
-        // Items use finalPageIndex (0-based) which already accounts for blank pages.
-        // Fall back to pageNum-based indexing (offset by startCount) for items without it.
+        // Append trailing extras (blanks and merged-PDF pages) in DOM order.
+        // For merged pages, copy the page from the source PDF using copyPages.
+        // Cache loaded source docs by sourceId so we don't reload identical bytes.
+        const sourceCache = {};
+        const trailing = trailingExtras || [];
+        for (const extra of trailing) {
+            if (extra.kind === 'blank') {
+                doc.addPage([extra.entry.pdfWidth, extra.entry.pdfHeight]);
+            } else if (extra.kind === 'merged') {
+                const { sourceId, sourceBytes, sourcePageIndex } = extra.entry;
+                let cached = sourceCache[sourceId];
+                if (!cached) {
+                    cached = await PDFLib.PDFDocument.load(sourceBytes);
+                    sourceCache[sourceId] = cached;
+                }
+                const [copied] = await doc.copyPages(cached, [sourcePageIndex]);
+                doc.addPage(copied);
+            }
+        }
+
+        // Items use finalPageIndex (0-based) which already accounts for blank/merged pages.
         const pages = doc.getPages();
-        const startCount = startPages.length;
+        const startCount = startList.length;
 
         const fonts = await embedStandardFonts(doc);
         const fontInfoCache = {};
