@@ -22,7 +22,7 @@ import {
 // ============================================
 // Save modified PDF
 // ============================================
-export async function savePDF(pdfBytes, textItems, imageItems, startBlanks, trailingExtras, originalFileName) {
+export async function savePDF(pdfBytes, textItems, imageItems, startBlanks, trailingExtras, drawnStrokes, originalFileName) {
     try {
         if (typeof PDFLib === 'undefined') {
             alert('PDF library is still loading. Please wait a moment and try again.');
@@ -69,6 +69,7 @@ export async function savePDF(pdfBytes, textItems, imageItems, startBlanks, trai
         await processModifiedText(doc, pages, textItems, fonts, fontInfoCache, startCount);
         await processImportedImages(doc, pages, imageItems, startCount);
         processMovedImages(doc, pages, imageItems, startCount);
+        processDrawnStrokes(doc, pages, drawnStrokes || [], startCount);
 
         const modifiedPdfBytes = await doc.save();
         await downloadPdf(modifiedPdfBytes, originalFileName);
@@ -387,6 +388,78 @@ function processMovedImages(doc, pages, imageItems, startCount = 0) {
             }
         }
     }
+}
+
+// ============================================
+// Process drawn strokes (free-hand drawing)
+// ============================================
+
+/**
+ * Convert each stroke's canvas-pixel points to PDF points and draw a vector
+ * SVG path on the right page. PDF Y is bottom-up while canvas Y is top-down,
+ * so we flip Y when constructing the path data.
+ */
+function processDrawnStrokes(doc, pages, strokes, startCount = 0) {
+    for (const stroke of strokes) {
+        if (!stroke.points || stroke.points.length === 0) continue;
+
+        const pageIdx = stroke.finalPageIndex != null && stroke.finalPageIndex >= 0
+            ? stroke.finalPageIndex
+            : startCount;
+        const page = pages[pageIdx];
+        if (!page) continue;
+
+        const pageWidth = page.getWidth();
+        const pageHeight = page.getHeight();
+        const canvas = stroke.canvas;
+        if (!canvas) continue;
+
+        // canvas pixels per PDF point — same factor used elsewhere.
+        const scale = canvas.width / pageWidth;
+
+        // Build the SVG path in canvas-pixel coords (top-down). pdf-lib's
+        // drawSvgPath flips Y for us, so we anchor at (0, pageHeight) and
+        // pass scale=1/scale to convert canvas pixels → PDF points.
+        const d = buildSavePathFromPoints(stroke.points);
+        const { r, g, b } = hexToRgb(stroke.color);
+        page.drawSvgPath(d, {
+            x: 0,
+            y: pageHeight,
+            scale: 1 / scale,
+            borderColor: PDFLib.rgb(r, g, b),
+            borderWidth: stroke.size,
+            borderOpacity: stroke.opacity ?? 1,
+            borderLineCap: PDFLib.LineCapStyle?.Round,
+        });
+    }
+}
+
+function buildSavePathFromPoints(points) {
+    if (points.length === 1) {
+        const p = points[0];
+        return `M ${p.x} ${p.y} L ${p.x + 0.01} ${p.y + 0.01}`;
+    }
+    let d = `M ${points[0].x} ${points[0].y}`;
+    for (let i = 1; i < points.length - 1; i++) {
+        const a = points[i];
+        const b = points[i + 1];
+        d += ` Q ${a.x} ${a.y} ${(a.x + b.x) / 2} ${(a.y + b.y) / 2}`;
+    }
+    const last = points[points.length - 1];
+    d += ` L ${last.x} ${last.y}`;
+    return d;
+}
+
+function hexToRgb(hex) {
+    const clean = hex.replace('#', '');
+    const num = parseInt(clean.length === 3
+        ? clean.split('').map(c => c + c).join('')
+        : clean, 16);
+    return {
+        r: ((num >> 16) & 0xff) / 255,
+        g: ((num >> 8) & 0xff) / 255,
+        b: (num & 0xff) / 255,
+    };
 }
 
 // ============================================

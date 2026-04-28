@@ -4,6 +4,7 @@ import { makeEditable } from './editor.js';
 import { savePDF } from './saver.js';
 import { undo, redo, onHistoryChange, clearHistory, recordAction } from './history.js';
 import { getActiveTextItem } from './toolbar.js';
+import { initDraw, setDrawMode, isDrawMode, setDrawSettings, refreshDrawOverlays } from './draw.js';
 import { MAX_IMPORT_SCALE } from './utils/constants.js';
 
 // PDF.js worker setup
@@ -15,6 +16,7 @@ let textItems = [];
 let imageItems = [];
 let addedPages = []; // [{ position: 'start'|'end', width, height, container }]
 let mergedPages = []; // [{ sourceBytes, sourceId, sourcePageIndex, container }]
+let drawnStrokes = []; // [{ pageContainer, canvas, element, color, size, opacity, points }]
 let originalFileName = '';
 
 const pdfInput = document.getElementById('pdfInput');
@@ -39,6 +41,14 @@ const addPageAfterBtn = document.getElementById('addPageAfterBtn');
 const mergePdfBtn = document.getElementById('mergePdfBtn');
 const mergePdfInput = document.getElementById('mergePdfInput');
 const pageIndicator = document.getElementById('pageIndicator');
+const drawBtn = document.getElementById('drawBtn');
+const drawPalette = document.getElementById('drawPalette');
+const drawColor = document.getElementById('drawColor');
+const drawSize = document.getElementById('drawSize');
+const drawSizeLabel = document.getElementById('drawSizeLabel');
+const drawOpacity = document.getElementById('drawOpacity');
+const drawOpacityLabel = document.getElementById('drawOpacityLabel');
+const drawDoneBtn = document.getElementById('drawDone');
 
 // ============================================
 // Undo / Redo
@@ -137,6 +147,9 @@ async function loadPDF(file) {
         clearHistory();
         addedPages.length = 0;
         mergedPages.length = 0;
+        drawnStrokes.length = 0;
+        // Exit draw mode on new file load (strokes cleared, palette hidden).
+        if (isDrawMode()) toggleDrawMode(false);
         await renderPDF(pdfDoc, pdfViewer, textItems, imageItems);
         updatePageIndicator();
     } catch (error) {
@@ -150,13 +163,17 @@ async function loadPDF(file) {
 // ============================================
 let addTextMode = false;
 
+function setAddTextMode(active) {
+    addTextMode = active;
+    addTextBtn.classList.toggle('active', active);
+    pdfViewer.classList.toggle('placement-mode', active);
+}
+
 addTextBtn.addEventListener('click', () => {
-    addTextMode = !addTextMode;
-    addTextBtn.classList.toggle('active', addTextMode);
-    pdfViewer.classList.toggle('placement-mode', addTextMode);
-    if (addTextMode) {
-        showToast('Click on the PDF to place new text');
-    }
+    const next = !addTextMode;
+    if (next && isDrawMode()) toggleDrawMode(false);
+    setAddTextMode(next);
+    if (next) showToast('Click on the PDF to place new text');
 });
 
 pdfViewer.addEventListener('click', async (e) => {
@@ -267,9 +284,7 @@ pdfViewer.addEventListener('click', async (e) => {
     });
 
     // Exit placement mode and immediately make the text editable
-    addTextMode = false;
-    addTextBtn.classList.remove('active');
-    pdfViewer.classList.remove('placement-mode');
+    setAddTextMode(false);
     makeEditable(textItemData);
 });
 
@@ -512,6 +527,7 @@ async function addBlankPage(position) {
     }
     applyZoom();
     updatePageIndicator();
+    refreshDrawOverlays();
 
     recordAction({
         undo() {
@@ -531,6 +547,7 @@ async function addBlankPage(position) {
             }
             applyZoom();
             updatePageIndicator();
+            refreshDrawOverlays();
         },
     });
 
@@ -540,6 +557,39 @@ async function addBlankPage(position) {
 
 addPageBeforeBtn.addEventListener('click', () => addBlankPage('start'));
 addPageAfterBtn.addEventListener('click', () => addBlankPage('end'));
+
+// ============================================
+// Draw (free-hand) tool
+// ============================================
+initDraw(pdfViewer, drawnStrokes);
+
+function syncDrawSettingsFromUI() {
+    setDrawSettings({
+        color: drawColor.value,
+        size: parseInt(drawSize.value, 10),
+        opacity: parseInt(drawOpacity.value, 10) / 100,
+    });
+    drawSizeLabel.textContent = drawSize.value;
+    drawOpacityLabel.textContent = drawOpacity.value + '%';
+}
+
+function toggleDrawMode(force) {
+    const next = typeof force === 'boolean' ? force : !isDrawMode();
+    setDrawMode(next);
+    drawBtn.classList.toggle('active', next);
+    drawPalette.style.display = next ? 'flex' : 'none';
+    if (next) syncDrawSettingsFromUI();
+}
+
+drawBtn.addEventListener('click', () => {
+    const next = !isDrawMode();
+    if (next && addTextMode) setAddTextMode(false);
+    toggleDrawMode(next);
+});
+drawDoneBtn.addEventListener('click', () => toggleDrawMode(false));
+drawColor.addEventListener('input', syncDrawSettingsFromUI);
+drawSize.addEventListener('input', syncDrawSettingsFromUI);
+drawOpacity.addEventListener('input', syncDrawSettingsFromUI);
 
 // ============================================
 // Merge another PDF (append its pages after the current PDF)
@@ -586,6 +636,7 @@ async function mergePDFFile(file) {
 
         applyZoom();
         updatePageIndicator();
+        refreshDrawOverlays();
 
         const firstNew = newEntries[0]?.container;
         if (firstNew) firstNew.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -607,6 +658,7 @@ async function mergePDFFile(file) {
                 }
                 applyZoom();
                 updatePageIndicator();
+                refreshDrawOverlays();
             },
         });
 
@@ -631,6 +683,10 @@ saveBtn.addEventListener('click', () => {
     };
     for (const item of textItems) item.finalPageIndex = containerIndex(item);
     for (const item of imageItems) item.finalPageIndex = containerIndex(item);
+    for (const stroke of drawnStrokes) {
+        const c = stroke.pageContainer;
+        stroke.finalPageIndex = c ? pageContainers.indexOf(c) : -1;
+    }
 
     // Walk the DOM in order to build the list of pages to add to the saved doc.
     // Each entry is either a blank page (to insert) or a merged page (to copy).
@@ -652,5 +708,5 @@ saveBtn.addEventListener('click', () => {
 
     const startBlanks = addedPages.filter(p => p.position === 'start');
 
-    savePDF(pdfBytes, textItems, imageItems, startBlanks, trailingExtras, originalFileName);
+    savePDF(pdfBytes, textItems, imageItems, startBlanks, trailingExtras, drawnStrokes, originalFileName);
 });

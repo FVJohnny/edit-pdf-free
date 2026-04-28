@@ -270,6 +270,18 @@ body.drag-over-page::after {
     cursor: crosshair;
 }
 
+/* Draw mode: crosshair cursor everywhere on the PDF, suppress hovers on items */
+.pdf-viewer.draw-mode {
+    cursor: crosshair;
+}
+.pdf-viewer.draw-mode .editable-text,
+.pdf-viewer.draw-mode .draggable-image {
+    pointer-events: none !important;
+}
+.pdf-viewer.draw-mode .draw-overlay {
+    pointer-events: auto;
+}
+
 .hidden-input {
     display: none;
 }
@@ -573,4 +585,52 @@ body.drag-over-page::after {
     color: #e84444;
     font-size: 0.85rem;
     line-height: 1;
+}
+
+/* ============================================
+   Draw Palette
+   ============================================ */
+
+.draw-palette {
+    position: fixed;
+    z-index: 2000;
+    top: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: #1a1a1a;
+    border: 1px solid #333;
+    border-radius: 8px;
+    padding: 6px 10px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+    user-select: none;
+}
+
+.draw-slider {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: #aaa;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+}
+
+.draw-slider input[type="range"] {
+    width: 90px;
+    accent-color: var(--accent);
+}
+
+.draw-slider-value {
+    color: #ddd;
+    min-width: 32px;
+    text-align: right;
+}
+
+.draw-overlay {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 5;
 }
