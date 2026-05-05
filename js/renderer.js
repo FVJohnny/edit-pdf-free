@@ -235,6 +235,15 @@ function createTextItem(item, index, pageNum, viewport, canvas, textContent, pag
  *   Pass 2: Merge consecutive lines into paragraphs (vertical — similar left edge,
  *           similar font size, vertical gap ≈ line height)
  */
+/** Whether two sampled text colors are close enough to be considered the same. */
+function sameTextColor(a, b) {
+    const ca = a.textColor, cb = b.textColor;
+    if (!ca || !cb) return true;
+    return Math.abs(ca.r - cb.r) < 0.08 &&
+           Math.abs(ca.g - cb.g) < 0.08 &&
+           Math.abs(ca.b - cb.b) < 0.08;
+}
+
 function mergeAdjacentTextItems(items) {
     if (items.length <= 1) return items;
 
@@ -262,7 +271,8 @@ function mergeAdjacentTextItems(items) {
         const maxGap = Math.max(current.renderedFontSize, next.renderedFontSize) * 0.5;
         const adjacent = gap >= -2 && gap < maxGap;
 
-        if (sameBaseline && adjacent && current.originalText.trim() !== '' && next.originalText.trim() !== '') {
+        if (sameBaseline && adjacent && sameTextColor(current, next) &&
+            current.originalText.trim() !== '' && next.originalText.trim() !== '') {
             current = mergeInline(current, next);
         } else {
             lines.push(current);
@@ -310,7 +320,8 @@ function mergeAdjacentTextItems(items) {
 
         const bothNonEmpty = current.originalText.trim() !== '' && nextLine.originalText.trim() !== '';
 
-        if (similarSize && similarLeft && normalSpacing && consistent && bothNonEmpty) {
+        if (similarSize && similarLeft && normalSpacing && consistent && bothNonEmpty &&
+            sameTextColor(current, nextLine)) {
             if (lastBaselineDist === null) lastBaselineDist = baselineDist;
             current = mergeLines(current, nextLine);
         } else {
