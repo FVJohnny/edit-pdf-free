@@ -235,13 +235,22 @@ function createTextItem(item, index, pageNum, viewport, canvas, textContent, pag
  *   Pass 2: Merge consecutive lines into paragraphs (vertical — similar left edge,
  *           similar font size, vertical gap ≈ line height)
  */
-/** Whether two sampled text colors are close enough to be considered the same. */
+/**
+ * Whether two sampled text colors are close enough to be considered the same.
+ * Sampling picks up anti-aliased glyph edges, so the threshold needs to tolerate
+ * shade variance while still distinguishing genuinely different colors
+ * (e.g. black vs blue, black vs red).
+ */
 function sameTextColor(a, b) {
     const ca = a.textColor, cb = b.textColor;
     if (!ca || !cb) return true;
-    return Math.abs(ca.r - cb.r) < 0.08 &&
-           Math.abs(ca.g - cb.g) < 0.08 &&
-           Math.abs(ca.b - cb.b) < 0.08;
+    // Treat both as "dark" if their luminance is low — anti-aliased dark grays
+    // and pure black should merge.
+    const lum = (c) => c.r * 0.299 + c.g * 0.587 + c.b * 0.114;
+    if (lum(ca) < 0.35 && lum(cb) < 0.35) return true;
+    return Math.abs(ca.r - cb.r) < 0.25 &&
+           Math.abs(ca.g - cb.g) < 0.25 &&
+           Math.abs(ca.b - cb.b) < 0.25;
 }
 
 function mergeAdjacentTextItems(items) {
