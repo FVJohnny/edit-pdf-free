@@ -15,7 +15,7 @@ import { showImageToolbar, repositionImageToolbar, coverOriginalImage } from './
 import { makeEditable } from './editor.js';
 import { sampleBgColor, sampleTextColor, sampleImageBgColor, rgbToCss } from './utils/color.js';
 import { coverOriginalText, captureCanvasRegion } from './utils/canvas.js';
-import { DRAG_THRESHOLD, MIN_RESIZE_PX, MIN_IMAGE_SIZE } from './utils/constants.js';
+import { DRAG_THRESHOLD, MIN_RESIZE_PX, MIN_IMAGE_SIZE, FONT_BASELINE_RATIO } from './utils/constants.js';
 import { recordAction } from './history.js';
 
 function clamp(value, min, max) {
@@ -180,12 +180,16 @@ function createTextItem(item, index, pageNum, viewport, canvas, textContent, pag
     const bgColor = sampleBgColor(canvas, canvasX, canvasY, renderedWidth);
     const textColor = sampleTextColor(canvas, coords, renderedWidth, renderedFontSize, item.str);
 
+    // Align the rendered baseline with the PDF baseline. CSS positions the
+    // top of the line box, but the glyph baseline sits ~0.78 em below the top.
+    const cssTop = canvasY - renderedFontSize * FONT_BASELINE_RATIO;
+
     const span = document.createElement('span');
     span.textContent = item.str;
     span.className = 'editable-text';
     span.style.position = 'absolute';
     span.style.left = canvasX + 'px';
-    span.style.top = (canvasY - item.height) + 'px';
+    span.style.top = cssTop + 'px';
     span.style.fontSize = renderedFontSize + 'px';
     span.style.lineHeight = '1';
     span.style.fontFamily = fontFamily;
@@ -219,7 +223,7 @@ function createTextItem(item, index, pageNum, viewport, canvas, textContent, pag
         moveOffsetY: 0,
         originalCovered: false,
         cssLeft: canvasX,
-        cssTop: canvasY - item.height,
+        cssTop,
         canvas,
         renderedFontSize,
     };

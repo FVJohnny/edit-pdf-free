@@ -39,6 +39,14 @@ export const PDF_COVER_WIDTH_PADDING = 6;
 export const MIN_FONT_SIZE = 6;
 
 /**
+ * Approximate baseline position within a CSS line box at line-height: 1,
+ * as a fraction of font-size from the top. Most Latin fonts (Helvetica,
+ * Arial, Times, Calibri) put the baseline at ~0.78 em. Used to align the
+ * editable text overlay's rendered baseline with the original PDF baseline.
+ */
+export const FONT_BASELINE_RATIO = 0.78;
+
+/**
  * Color quantization bucket size.
  * Background sampling uses 4 (coarser grouping for large bg areas).
  * Text sampling uses 8 (finer grouping to distinguish colored text).
