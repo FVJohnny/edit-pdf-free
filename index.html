@@ -58,11 +58,6 @@
     <!-- Editor Section -->
     <section class="editor-section" id="editor">
         <div class="editor-section-inner">
-            <div class="section-header" data-animate="fade-up">
-                <h2 class="section-title">The Editor</h2>
-                <p class="section-desc">Drop a PDF below,  edit it, and save when you're done.</p>
-            </div>
-
             <div class="editor-wrapper" data-animate="fade-up" data-delay="1">
                 <!-- Upload Area -->
                 <div class="upload-zone" id="uploadZone">
@@ -80,10 +75,15 @@
                             <strong>Drop your PDF here</strong> or click to browse
                         </p>
                         <p class="upload-hint">Your file never leaves your browser. Everything happens locally.</p>
+                        <button class="upload-blank-btn" id="blankPdfBtn" data-tip="Create an empty one-page PDF and start editing" data-tip-pos="bottom">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg>
+                            Or start with a blank PDF
+                        </button>
                     </div>
                 </div>
 
-                <!-- Toolbar (hidden until PDF loaded) -->
+                <!-- Toolbar + tools bar: sticky so they stay visible while scrolling the page -->
+                <div class="editor-bars">
                 <div class="toolbar" id="toolbar">
                     <div class="toolbar-left">
                         <button class="toolbar-btn" id="newFileBtn" data-tip="Open a different PDF file" data-tip-pos="bottom">
@@ -121,13 +121,13 @@
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
                         Draw
                     </button>
-                    <input type="file" id="imageInput" accept="image/png,image/jpeg,image/jpg" class="hidden-input">
+                    <input type="file" id="imageInput" accept="image/png,image/jpeg,image/jpg" multiple class="hidden-input">
                     <span class="pdf-tools-sep"></span>
-                    <button class="pdf-tools-btn" id="addPageBeforeBtn" data-tip="Add a blank page at the beginning" data-tip-pos="bottom">
+                    <button class="pdf-tools-btn" id="addPageBeforeBtn" data-tip="Insert a blank page before the current page" data-tip-pos="bottom">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg>
                         Page Before
                     </button>
-                    <button class="pdf-tools-btn" id="addPageAfterBtn" data-tip="Add a blank page at the end" data-tip-pos="bottom">
+                    <button class="pdf-tools-btn" id="addPageAfterBtn" data-tip="Insert a blank page after the current page" data-tip-pos="bottom">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg>
                         Page After
                     </button>
@@ -139,6 +139,8 @@
                     <span class="pdf-tools-sep"></span>
                     <span class="pdf-tools-pages" id="pageIndicator" data-tip="Current page / total pages" data-tip-pos="bottom">Page 1 / 1</span>
                     <span class="pdf-tools-sep"></span>
+                    <span class="pdf-tools-pages" id="sizeIndicator" data-tip="Size of the PDF if saved right now" data-tip-pos="bottom">–</span>
+                    <span class="pdf-tools-sep"></span>
                     <button class="pdf-tools-btn" id="zoomOutBtn" data-tip="Zoom out" data-tip-pos="bottom">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
                     </button>
@@ -147,8 +149,9 @@
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
                     </button>
                 </div>
+                </div>
 
-                <!-- PDF Viewer -->
+                <!-- PDF Viewer + minimap scrollbar -->
                 <div class="pdf-container">
                     <div id="pdfViewer" class="pdf-viewer">
                         <div class="placeholder" id="placeholder">
@@ -158,6 +161,10 @@
                             <p>Import a PDF to start editing</p>
                             <small>Click on any text to edit it directly</small>
                         </div>
+                    </div>
+                    <div class="pdf-minimap" id="pdfMinimap">
+                        <div class="pdf-minimap-inner" id="minimapInner"></div>
+                        <div class="pdf-minimap-strip" id="minimapStrip"></div>
                     </div>
                 </div>
             </div>

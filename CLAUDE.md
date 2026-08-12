@@ -90,11 +90,31 @@ Use the MCP Chrome tools (`mcp__chrome__*`) to test features in the browser. Lau
    - **Resize** — Hover over an image to reveal resize handles (red corner dots, edge cursors). Drag a corner or edge to resize. Verify the image scales and the original position is covered.
    - **Shift+Resize (aspect ratio lock)** — Hold Shift while dragging any resize handle. Verify the image maintains its original aspect ratio throughout the resize. Test with both corner and edge handles.
 
-6. **Add blank pages** — Click "Page Before" to insert a blank page at the beginning, then "Page After" to add one at the end. Verify:
-   - Each new page appears in the viewer at the right position with white background.
-   - Page dimensions match the adjacent original page.
+6. **Add blank pages** — Scroll to a page in the middle of the document, click "Page Before" and "Page After". Verify:
+   - The blank pages are inserted immediately before/after the **current** page (not at the document ends).
+   - Page dimensions match the current page, white background.
    - You can place text and import images on a blank page (test at least one).
    - Undo/redo correctly removes/re-adds the blank pages.
+   - The saved PDF has the blank pages at the same positions.
+
+6b. **Cross-page drag** — Drag a text item and an image from one page onto another (drag toward the viewer edge; it auto-scrolls until the target page is visible, including targets several pages away). Verify:
+   - The item reparents onto the target page and stays under the cursor.
+   - For existing (extracted) items, the original position on the source page is covered.
+   - Undo returns the item to its original page and position.
+   - In the saved PDF the item appears on the target page (for existing images this exercises copying the XObject to the target page's resources; for existing text the cover must be on the source page).
+
+6c. **Multi-image import + compression** — Select 2+ images in one Import Image dialog. A "Compress images?" modal offers High quality / Balanced / Smallest / Original. Verify:
+   - All images are placed with a small cascade offset and each is independently draggable.
+   - Choosing a compression level re-encodes the images (toast shows original → compressed size) and the size indicator drops accordingly.
+   - "Original" imports unchanged bytes; Cancel aborts the import.
+
+6d. **Start blank PDF** — On the upload zone, click "Or start with a blank PDF". Verify a one-page blank document loads and is fully editable (add text, import image, save).
+
+6e. **Size indicator** — The toolbar shows the byte-accurate size the PDF would have if saved now. Verify it updates (debounced) after edits, and roughly matches the actual saved file size.
+
+6f. **Minimap** — A thin page-preview strip on the right of the viewer. Verify thumbnails match the pages **including DOM overlays** (imported/moved images, new/edited text, drawings), the light strip tracks the scroll position, and clicking/dragging on the minimap scrolls the viewer.
+
+6g. **Sticky editor bars** — Scroll the whole page (not the viewer) down past the editor. The toolbar and tools bar must stay pinned to the top of the viewport while any part of the editor is visible.
 
 7. **Save PDF** — Click "Save PDF", enter a filename, and confirm. Intercept or download the generated PDF.
 
@@ -107,6 +127,7 @@ Use the MCP Chrome tools (`mcp__chrome__*`) to test features in the browser. Lau
    - **Bold/Italic** — Style overrides render correctly in the saved PDF.
    - **Moved images** — Images that were dragged appear at their new positions in the saved PDF. The original positions are cleanly covered.
    - **Resized images** — Images that were resized appear at their new dimensions in the saved PDF.
+   - **Imported photos with EXIF rotation** — Import `tests/fixtures/exif-rotated-photo.jpg` (raw pixels sideways, EXIF orientation tag 6). It must appear upright both in the editor preview AND in the saved PDF (PDF viewers ignore EXIF, so the save path must bake the rotation into the pixels).
    - **Unmodified content** — Text and images that were NOT edited should be completely unchanged — no artifacts, no cover rects, no font substitution.
    - **Inserted blank pages** — Pages added before/after appear in the saved PDF in the correct order with the right dimensions, and any content placed on them is preserved.
 

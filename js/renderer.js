@@ -57,6 +57,8 @@ export async function renderPDF(pdfDoc, pdfViewer, textItems, imageItems) {
         const pageContainer = document.createElement('div');
         pageContainer.style.position = 'relative';
         pageContainer.style.marginBottom = '20px';
+        pageContainer.dataset.pdfWidth = String(unscaledViewport.width);
+        pageContainer.dataset.pdfHeight = String(unscaledViewport.height);
         pageContainer.appendChild(canvas);
 
         const textLayerDiv = createTextLayerDiv(viewport);
@@ -101,6 +103,8 @@ export async function renderMergedPage(pdfJsDoc, pageNum, availableWidth) {
     container.style.position = 'relative';
     container.style.marginBottom = '20px';
     container.dataset.mergedPage = 'true';
+    container.dataset.pdfWidth = String(unscaledViewport.width);
+    container.dataset.pdfHeight = String(unscaledViewport.height);
     container.appendChild(canvas);
 
     const textLayer = document.createElement('div');
@@ -225,6 +229,7 @@ function createTextItem(item, index, pageNum, viewport, canvas, textContent, pag
         cssLeft: canvasX,
         cssTop,
         canvas,
+        originCanvas: canvas,
         renderedFontSize,
     };
 }
@@ -567,6 +572,7 @@ async function extractImages(page, viewport, canvas, textLayerDiv, imageItems, p
                 moveOffsetY: 0,
                 originalCovered: false,
                 canvas,
+                originCanvas: canvas,
                 imageDataURL,
             };
 
@@ -580,6 +586,68 @@ async function extractImages(page, viewport, canvas, textLayerDiv, imageItems, p
 // ============================================
 // Image drag, resize, and toolbar integration
 // ============================================
+
+/** The viewer page container under the given client Y (pages are stacked vertically). */
+function pageContainerAtPoint(viewerEl, clientY) {
+    const containers = viewerEl.querySelectorAll(':scope > div');
+    for (const c of containers) {
+        const r = c.getBoundingClientRect();
+        if (clientY >= r.top && clientY <= r.bottom) return c;
+    }
+    return null;
+}
+
+/**
+ * Move a dragged element onto the page container under the cursor when it
+ * differs from the item's current page. Updates item.canvas (item.originCanvas
+ * keeps pointing at the page the item came from, for covers and saving).
+ * Returns the item's (possibly new) canvas.
+ */
+function crossPageIfNeeded(element, item, e) {
+    const curCanvas = item.canvas;
+    const viewerEl = curCanvas.closest('.pdf-viewer');
+    if (!viewerEl) return curCanvas;
+    const target = pageContainerAtPoint(viewerEl, e.clientY);
+    if (!target || target.contains(curCanvas)) return curCanvas;
+    const layer = target.querySelector('.custom-text-layer');
+    const targetCanvas = target.querySelector('canvas');
+    if (!layer || !targetCanvas) return curCanvas;
+    layer.appendChild(element);
+    item.canvas = targetCanvas;
+    return targetCanvas;
+}
+
+/**
+ * Auto-scroll the viewer while a drag hovers near its top/bottom edge, so
+ * items can be dragged to pages that aren't currently visible. Re-invokes the
+ * drag's move handler with the last mouse event so the dragged element follows.
+ * Returns a stop() function — call it on mouseup.
+ */
+function startDragAutoScroll(getViewer, getLastEvent, onMove) {
+    const EDGE = 48;
+    const STEP = 16;
+    const timer = setInterval(() => {
+        const viewerEl = getViewer();
+        const e = getLastEvent();
+        if (!viewerEl || !e) return;
+        const vr = viewerEl.getBoundingClientRect();
+        if (e.clientY < vr.top + EDGE) viewerEl.scrollTop -= STEP;
+        else if (e.clientY > vr.bottom - EDGE) viewerEl.scrollTop += STEP;
+        else return;
+        onMove(e);
+    }, 16);
+    return () => clearInterval(timer);
+}
+
+/** Restore/apply a drag result (position, page, offsets) — used by undo/redo. */
+function applyDragPlacement(element, item, s) {
+    if (element.parentElement !== s.parent && s.parent) s.parent.appendChild(element);
+    element.style.left = s.left + 'px';
+    element.style.top = s.top + 'px';
+    item.canvas = s.canvas;
+    item.moveOffsetX = s.offX;
+    item.moveOffsetY = s.offY;
+}
 
 /** Set up drag-to-move, click-to-select, and resize handles for an image overlay. */
 export function setupImageDrag(overlay, imageItemData, canvas) {
@@ -607,16 +675,31 @@ export function setupImageDrag(overlay, imageItemData, canvas) {
         const imgW = parseFloat(overlay.style.width);
         const imgH = parseFloat(overlay.style.height);
 
+        // Grab offsets in canvas pixels so the overlay stays anchored under the
+        // cursor while dragging, including across pages and under zoom.
+        const startCanvas = imageItemData.canvas;
+        const startCanvasRect = startCanvas.getBoundingClientRect();
+        const startPxScale = startCanvas.width / startCanvasRect.width;
+        const overlayRect = overlay.getBoundingClientRect();
+
         dragState = {
             startX: e.clientX,
             startY: e.clientY,
+            grabDx: (e.clientX - overlayRect.left) * startPxScale,
+            grabDy: (e.clientY - overlayRect.top) * startPxScale,
+            startParent: overlay.parentElement,
+            startCanvas,
             origLeft: parseFloat(overlay.style.left),
             origTop: parseFloat(overlay.style.top),
+            prevOffsetX: imageItemData.moveOffsetX,
+            prevOffsetY: imageItemData.moveOffsetY,
             hasMoved: false,
         };
 
+        let lastMoveEvent = null;
         const onMouseMove = (e) => {
             if (!dragState) return;
+            lastMoveEvent = e;
             const dx = e.clientX - dragState.startX;
             const dy = e.clientY - dragState.startY;
 
@@ -626,47 +709,54 @@ export function setupImageDrag(overlay, imageItemData, canvas) {
                 coverOriginalImage(imageItemData);
                 showImageToolbar(imageItemData);
             }
+            if (!dragState.hasMoved) return;
 
-            if (dragState.hasMoved) {
-                // Clamp to page canvas boundaries
-                const newLeft = clamp(dragState.origLeft + dx, 0, canvas.width - imgW);
-                const newTop = clamp(dragState.origTop + dy, 0, canvas.height - imgH);
-                overlay.style.left = newLeft + 'px';
-                overlay.style.top = newTop + 'px';
-                repositionImageToolbar(imageItemData);
-            }
+            const curCanvas = crossPageIfNeeded(overlay, imageItemData, e);
+
+            // Anchor the overlay under the cursor, clamped to the page canvas
+            const rect = curCanvas.getBoundingClientRect();
+            const pxScale = curCanvas.width / rect.width;
+            const newLeft = clamp((e.clientX - rect.left) * pxScale - dragState.grabDx, 0, curCanvas.width - imgW);
+            const newTop = clamp((e.clientY - rect.top) * pxScale - dragState.grabDy, 0, curCanvas.height - imgH);
+            overlay.style.left = newLeft + 'px';
+            overlay.style.top = newTop + 'px';
+            repositionImageToolbar(imageItemData);
         };
+
+        const stopAutoScroll = startDragAutoScroll(
+            () => imageItemData.canvas.closest('.pdf-viewer'),
+            () => dragState?.hasMoved ? lastMoveEvent : null,
+            onMouseMove
+        );
 
         const onMouseUp = () => {
             document.removeEventListener('mousemove', onMouseMove);
             document.removeEventListener('mouseup', onMouseUp);
+            stopAutoScroll();
             if (!dragState) return;
 
             if (dragState.hasMoved) {
-                const movedDx = parseFloat(overlay.style.left) - dragState.origLeft;
-                const movedDy = parseFloat(overlay.style.top) - dragState.origTop;
-                imageItemData.moveOffsetX += movedDx;
-                imageItemData.moveOffsetY += movedDy;
                 overlay.classList.remove('dragging');
                 overlay.classList.add('moved');
 
-                const savedOrigLeft = dragState.origLeft;
-                const savedOrigTop = dragState.origTop;
-                const savedNewLeft = parseFloat(overlay.style.left);
-                const savedNewTop = parseFloat(overlay.style.top);
+                // Offsets are relative to the item's original css position; on a
+                // different page they represent the position on that page.
+                imageItemData.moveOffsetX = parseFloat(overlay.style.left) - imageItemData.cssLeft;
+                imageItemData.moveOffsetY = parseFloat(overlay.style.top) - imageItemData.cssTop;
+
+                const prev = {
+                    parent: dragState.startParent, canvas: dragState.startCanvas,
+                    left: dragState.origLeft, top: dragState.origTop,
+                    offX: dragState.prevOffsetX, offY: dragState.prevOffsetY,
+                };
+                const next = {
+                    parent: overlay.parentElement, canvas: imageItemData.canvas,
+                    left: parseFloat(overlay.style.left), top: parseFloat(overlay.style.top),
+                    offX: imageItemData.moveOffsetX, offY: imageItemData.moveOffsetY,
+                };
                 recordAction({
-                    undo() {
-                        overlay.style.left = savedOrigLeft + 'px';
-                        overlay.style.top = savedOrigTop + 'px';
-                        imageItemData.moveOffsetX -= movedDx;
-                        imageItemData.moveOffsetY -= movedDy;
-                    },
-                    redo() {
-                        overlay.style.left = savedNewLeft + 'px';
-                        overlay.style.top = savedNewTop + 'px';
-                        imageItemData.moveOffsetX += movedDx;
-                        imageItemData.moveOffsetY += movedDy;
-                    },
+                    undo() { applyDragPlacement(overlay, imageItemData, prev); },
+                    redo() { applyDragPlacement(overlay, imageItemData, next); },
                 });
             }
             showImageToolbar(imageItemData);
@@ -814,19 +904,31 @@ export function setupTextDrag(span, textItemData, canvas) {
         e.stopPropagation();
 
         const spanRect = span.getBoundingClientRect();
+        const startCanvas = textItemData.canvas;
+        const startCanvasRect = startCanvas.getBoundingClientRect();
+        const startPxScale = startCanvas.width / startCanvasRect.width;
 
         dragState = {
             startX: e.clientX,
             startY: e.clientY,
+            grabDx: (e.clientX - spanRect.left) * startPxScale,
+            grabDy: (e.clientY - spanRect.top) * startPxScale,
+            // Span dimensions in canvas pixels (for clamping and covers)
+            spanWidth: spanRect.width * startPxScale,
+            spanHeight: spanRect.height * startPxScale,
+            startParent: span.parentElement,
+            startCanvas,
             origLeft: parseFloat(span.style.left),
             origTop: parseFloat(span.style.top),
-            spanWidth: spanRect.width,
-            spanHeight: spanRect.height,
+            prevOffsetX: textItemData.moveOffsetX,
+            prevOffsetY: textItemData.moveOffsetY,
             hasMoved: false,
         };
 
+        let lastMoveEvent = null;
         const onMouseMove = (e) => {
             if (!dragState) return;
+            lastMoveEvent = e;
             const dx = e.clientX - dragState.startX;
             const dy = e.clientY - dragState.startY;
 
@@ -836,48 +938,55 @@ export function setupTextDrag(span, textItemData, canvas) {
                 showFormatToolbar(textItemData);
                 coverOriginalText(textItemData, dragState.spanWidth);
             }
+            if (!dragState.hasMoved) return;
 
-            if (dragState.hasMoved) {
-                // Clamp to page canvas boundaries
-                const newLeft = clamp(dragState.origLeft + dx, 0, canvas.width - dragState.spanWidth);
-                const newTop = clamp(dragState.origTop + dy, 0, canvas.height - dragState.spanHeight);
-                span.style.left = newLeft + 'px';
-                span.style.top = newTop + 'px';
-                repositionToolbar(textItemData);
-            }
+            const curCanvas = crossPageIfNeeded(span, textItemData, e);
+
+            // Anchor the span under the cursor, clamped to the page canvas
+            const rect = curCanvas.getBoundingClientRect();
+            const pxScale = curCanvas.width / rect.width;
+            const newLeft = clamp((e.clientX - rect.left) * pxScale - dragState.grabDx, 0, curCanvas.width - dragState.spanWidth);
+            const newTop = clamp((e.clientY - rect.top) * pxScale - dragState.grabDy, 0, curCanvas.height - dragState.spanHeight);
+            span.style.left = newLeft + 'px';
+            span.style.top = newTop + 'px';
+            repositionToolbar(textItemData);
         };
+
+        const stopAutoScroll = startDragAutoScroll(
+            () => textItemData.canvas.closest('.pdf-viewer'),
+            () => dragState?.hasMoved ? lastMoveEvent : null,
+            onMouseMove
+        );
 
         const onMouseUp = () => {
             document.removeEventListener('mousemove', onMouseMove);
             document.removeEventListener('mouseup', onMouseUp);
+            stopAutoScroll();
             if (!dragState) return;
 
             if (dragState.hasMoved) {
-                const movedDx = parseFloat(span.style.left) - dragState.origLeft;
-                const movedDy = parseFloat(span.style.top) - dragState.origTop;
-                textItemData.moveOffsetX += movedDx;
-                textItemData.moveOffsetY += movedDy;
                 span.classList.remove('dragging');
                 span.classList.add('modified', 'moved');
+
+                // Offsets are relative to the item's original css position; on a
+                // different page they represent the position on that page.
+                textItemData.moveOffsetX = parseFloat(span.style.left) - textItemData.cssLeft;
+                textItemData.moveOffsetY = parseFloat(span.style.top) - textItemData.cssTop;
                 showFormatToolbar(textItemData);
 
-                const savedOrigLeft = dragState.origLeft;
-                const savedOrigTop = dragState.origTop;
-                const savedNewLeft = parseFloat(span.style.left);
-                const savedNewTop = parseFloat(span.style.top);
+                const prev = {
+                    parent: dragState.startParent, canvas: dragState.startCanvas,
+                    left: dragState.origLeft, top: dragState.origTop,
+                    offX: dragState.prevOffsetX, offY: dragState.prevOffsetY,
+                };
+                const next = {
+                    parent: span.parentElement, canvas: textItemData.canvas,
+                    left: parseFloat(span.style.left), top: parseFloat(span.style.top),
+                    offX: textItemData.moveOffsetX, offY: textItemData.moveOffsetY,
+                };
                 recordAction({
-                    undo() {
-                        span.style.left = savedOrigLeft + 'px';
-                        span.style.top = savedOrigTop + 'px';
-                        textItemData.moveOffsetX -= movedDx;
-                        textItemData.moveOffsetY -= movedDy;
-                    },
-                    redo() {
-                        span.style.left = savedNewLeft + 'px';
-                        span.style.top = savedNewTop + 'px';
-                        textItemData.moveOffsetX += movedDx;
-                        textItemData.moveOffsetY += movedDy;
-                    },
+                    undo() { applyDragPlacement(span, textItemData, prev); },
+                    redo() { applyDragPlacement(span, textItemData, next); },
                 });
             } else {
                 makeEditable(textItemData);

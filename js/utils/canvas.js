@@ -13,7 +13,9 @@ import { TEXT_COVER_TOP_OFFSET, TEXT_COVER_HEIGHT_SCALE, COVER_PADDING } from '.
  */
 export function coverOriginalImage(imageItem) {
     if (imageItem.originalCovered) return;
-    const ctx = imageItem.canvas.getContext('2d');
+    // Cover always happens on the page the item came from, even after the
+    // item has been dragged to another page.
+    const ctx = (imageItem.originCanvas || imageItem.canvas).getContext('2d');
     ctx.fillStyle = rgbToCss(imageItem.bgColor);
     // Add 2px padding on each side to cover any sub-pixel edge artifacts
     const pad = 2;
@@ -36,7 +38,9 @@ export function coverOriginalImage(imageItem) {
  */
 export function coverOriginalText(textItem, spanWidth) {
     if (textItem.originalCovered) return;
-    const ctx = textItem.canvas.getContext('2d');
+    // Cover always happens on the page the item came from, even after the
+    // item has been dragged to another page.
+    const ctx = (textItem.originCanvas || textItem.canvas).getContext('2d');
     const fontSize = textItem.renderedFontSize;
     ctx.fillStyle = rgbToCss(textItem.bgColor);
 

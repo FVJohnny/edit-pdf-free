@@ -2,8 +2,9 @@
    Editor Section
    ============================================ */
 
+/* Small bottom padding so the page can't scroll far past the editor */
 .editor-section {
-    padding: 80px 24px 120px;
+    padding: 80px 24px 24px;
     background: var(--bg);
 }
 
@@ -31,17 +32,31 @@
     font-weight: 300;
 }
 
+/* No overflow:hidden here — it would break the sticky editor bars.
+   Corner rounding is applied to the first/last visible children instead. */
 .editor-wrapper {
     background: var(--bg-raised);
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
-    overflow: hidden;
+}
+
+/* Keeps the toolbar + tools bar pinned to the top of the viewport while the
+   editor is on screen, so the tools never scroll out of view. */
+.editor-bars {
+    position: sticky;
+    top: 0;
+    z-index: 40;
+}
+
+.editor-bars .toolbar {
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
 }
 
 /* Upload Zone */
 .upload-zone {
     position: relative;
     padding: 60px 40px;
+    border-radius: var(--radius-lg);
     border-bottom: 1px solid var(--border);
     text-align: center;
     cursor: pointer;
@@ -123,6 +138,33 @@ body.drag-over-page::after {
 .upload-hint {
     font-size: 0.82rem;
     color: var(--text-dim);
+}
+
+/* Sits inside .upload-content (pointer-events: none) and above the invisible
+   file input overlay, so it must restore pointer events and stack higher. */
+.upload-blank-btn {
+    pointer-events: auto;
+    position: relative;
+    z-index: 2;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 20px;
+    padding: 10px 18px;
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text-muted);
+    font-family: inherit;
+    font-size: 0.88rem;
+    cursor: pointer;
+    transition: all var(--transition);
+}
+
+.upload-blank-btn:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: rgba(232, 68, 68, 0.06);
 }
 
 .upload-zone.hidden {
@@ -290,10 +332,11 @@ body.drag-over-page::after {
 .pdf-container {
     overflow: hidden;
     display: none;
+    border-radius: 0 0 var(--radius-lg) var(--radius-lg);
 }
 
 .pdf-container.visible {
-    display: block;
+    display: flex;
 }
 
 .pdf-viewer {
@@ -302,6 +345,54 @@ body.drag-over-page::after {
     max-height: 80vh;
     min-height: 400px;
     padding: 24px;
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+/* Minimap scrollbar — thin live preview of all pages with a viewport strip */
+.pdf-minimap {
+    flex: 0 0 64px;
+    position: relative;
+    overflow: hidden;
+    border-left: 1px solid var(--border);
+    background: var(--surface);
+    cursor: pointer;
+    user-select: none;
+}
+
+.pdf-minimap-inner {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    padding: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    will-change: transform;
+}
+
+.pdf-minimap-thumb {
+    display: block;
+    width: 100%;
+    border-radius: 2px;
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+
+.pdf-minimap-strip {
+    position: absolute;
+    left: 0;
+    right: 0;
+    background: rgba(255, 255, 255, 0.22);
+    border-top: 1px solid rgba(255, 255, 255, 0.55);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.55);
+    pointer-events: none;
+}
+
+@media (max-width: 768px) {
+    .pdf-minimap {
+        display: none;
+    }
 }
 
 .placeholder {

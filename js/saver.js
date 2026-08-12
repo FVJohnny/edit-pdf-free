@@ -22,61 +22,65 @@ import {
 // ============================================
 // Save modified PDF
 // ============================================
-export async function savePDF(pdfBytes, textItems, imageItems, startBlanks, trailingExtras, drawnStrokes, originalFileName) {
+export async function savePDF(pdfBytes, textItems, imageItems, extraPages, drawnStrokes, originalFileName) {
     try {
         if (typeof PDFLib === 'undefined') {
             alert('PDF library is still loading. Please wait a moment and try again.');
             return;
         }
-
-        const doc = await PDFLib.PDFDocument.load(pdfBytes);
-        if (typeof fontkit !== 'undefined') doc.registerFontkit(fontkit);
-
-        // Insert blank pages at the very start, in original order (the first one
-        // added ends up at index 0). We insert in reverse to preserve order.
-        const startList = startBlanks || [];
-        for (let i = startList.length - 1; i >= 0; i--) {
-            doc.insertPage(0, [startList[i].pdfWidth, startList[i].pdfHeight]);
-        }
-
-        // Append trailing extras (blanks and merged-PDF pages) in DOM order.
-        // For merged pages, copy the page from the source PDF using copyPages.
-        // Cache loaded source docs by sourceId so we don't reload identical bytes.
-        const sourceCache = {};
-        const trailing = trailingExtras || [];
-        for (const extra of trailing) {
-            if (extra.kind === 'blank') {
-                doc.addPage([extra.entry.pdfWidth, extra.entry.pdfHeight]);
-            } else if (extra.kind === 'merged') {
-                const { sourceId, sourceBytes, sourcePageIndex } = extra.entry;
-                let cached = sourceCache[sourceId];
-                if (!cached) {
-                    cached = await PDFLib.PDFDocument.load(sourceBytes);
-                    sourceCache[sourceId] = cached;
-                }
-                const [copied] = await doc.copyPages(cached, [sourcePageIndex]);
-                doc.addPage(copied);
-            }
-        }
-
-        // Items use finalPageIndex (0-based) which already accounts for blank/merged pages.
-        const pages = doc.getPages();
-        const startCount = startList.length;
-
-        const fonts = await embedStandardFonts(doc);
-        const fontInfoCache = {};
-
-        await processModifiedText(doc, pages, textItems, fonts, fontInfoCache, startCount);
-        await processImportedImages(doc, pages, imageItems, startCount);
-        processMovedImages(doc, pages, imageItems, startCount);
-        processDrawnStrokes(doc, pages, drawnStrokes || [], startCount);
-
-        const modifiedPdfBytes = await doc.save();
+        const modifiedPdfBytes = await buildPdfBytes(pdfBytes, textItems, imageItems, extraPages, drawnStrokes);
         await downloadPdf(modifiedPdfBytes, originalFileName);
     } catch (error) {
         console.error('Error saving PDF:', error);
         showToast('Error saving PDF. Please try again.');
     }
+}
+
+/**
+ * Build the modified PDF and return its bytes without downloading.
+ * Also used by the toolbar size indicator to show the exact output size.
+ *
+ * extraPages: ordered [{ kind: 'blank'|'merged', domIndex, entry }] where domIndex
+ * is the page's position among the viewer's page containers (0-based).
+ */
+export async function buildPdfBytes(pdfBytes, textItems, imageItems, extraPages, drawnStrokes) {
+    const doc = await PDFLib.PDFDocument.load(pdfBytes);
+    if (typeof fontkit !== 'undefined') doc.registerFontkit(fontkit);
+
+    // Insert added pages (blank or merged) at their on-screen positions.
+    // Original pages are already in the doc in order; inserting extras at their
+    // final index in ascending order keeps every page at its viewer position.
+    const sourceCache = {};
+    const extras = (extraPages || []).slice().sort((a, b) => a.domIndex - b.domIndex);
+    for (const extra of extras) {
+        const idx = Math.min(extra.domIndex, doc.getPageCount());
+        if (extra.kind === 'blank') {
+            doc.insertPage(idx, [extra.entry.pdfWidth, extra.entry.pdfHeight]);
+        } else if (extra.kind === 'merged') {
+            const { sourceId, sourceBytes, sourcePageIndex } = extra.entry;
+            let cached = sourceCache[sourceId];
+            if (!cached) {
+                cached = await PDFLib.PDFDocument.load(sourceBytes);
+                sourceCache[sourceId] = cached;
+            }
+            const [copied] = await doc.copyPages(cached, [sourcePageIndex]);
+            doc.insertPage(idx, copied);
+        }
+    }
+
+    // Items use finalPageIndex / originPageIndex (0-based, set by the caller from
+    // the DOM container order, which matches the page order built above).
+    const pages = doc.getPages();
+
+    const fonts = await embedStandardFonts(doc);
+    const fontInfoCache = {};
+
+    await processModifiedText(doc, pages, textItems, fonts, fontInfoCache);
+    await processImportedImages(doc, pages, imageItems);
+    processMovedImages(doc, pages, imageItems);
+    processDrawnStrokes(doc, pages, drawnStrokes || []);
+
+    return doc.save();
 }
 
 // ============================================
@@ -127,7 +131,7 @@ function getFallbackFont(item, fonts) {
 // ============================================
 // Process modified text items
 // ============================================
-async function processModifiedText(doc, pages, textItems, fonts, fontInfoCache, startCount = 0) {
+async function processModifiedText(doc, pages, textItems, fonts, fontInfoCache) {
     // Group modified items by final page index (in the saved doc, 0-based).
     const byPage = {};
     for (const item of textItems) {
@@ -137,9 +141,8 @@ async function processModifiedText(doc, pages, textItems, fonts, fontInfoCache, 
             item.fontWeightOverride || item.fontStyleOverride ||
             item.fontSizeOverride || item.textColorOverride;
         if (!isModified) continue;
-        const pageIdx = item.finalPageIndex != null && item.finalPageIndex >= 0
-            ? item.finalPageIndex
-            : startCount + item.pageNum - 1;
+        const pageIdx = item.finalPageIndex;
+        if (pageIdx == null || pageIdx < 0) continue;
         if (!byPage[pageIdx]) byPage[pageIdx] = [];
         byPage[pageIdx].push(item);
     }
@@ -149,6 +152,13 @@ async function processModifiedText(doc, pages, textItems, fonts, fontInfoCache, 
         if (!page) continue;
 
         for (const item of items) {
+            // The page the text originally lived on (covers go there); for
+            // cross-page moves the redraw happens on `page` (the target).
+            const originPage = (item.originPageIndex != null && pages[item.originPageIndex]) || page;
+            // Item coordinates are anchored to the origin page's coordinate
+            // system. When the target page height differs, shift Y so the
+            // css-pixel position maps correctly onto the target page.
+            const pageHeightDiff = page.getHeight() - originPage.getHeight();
             // Original position and size in PDF coordinates
             const pdfX = item.transform[4];
             const pdfY = item.transform[5];
@@ -162,7 +172,7 @@ async function processModifiedText(doc, pages, textItems, fonts, fontInfoCache, 
             // Convert drag offset from screen pixels to PDF points
             // Note: Y is negated because PDF Y goes up, screen Y goes down
             const dragOffsetX = (item.moveOffsetX || 0) / item.scale;
-            const dragOffsetY = -(item.moveOffsetY || 0) / item.scale;
+            const dragOffsetY = -(item.moveOffsetY || 0) / item.scale + pageHeightDiff;
             const newX = pdfX + dragOffsetX;
             const newY = pdfY + dragOffsetY;
 
@@ -178,7 +188,7 @@ async function processModifiedText(doc, pages, textItems, fonts, fontInfoCache, 
                 const subFontSize = Math.sqrt(sub.transform[0] ** 2 + sub.transform[1] ** 2);
                 const subWidth = sub.width + PDF_COVER_WIDTH_PADDING;
                 const subBg = sub.bgColor || bgColor;
-                page.drawRectangle({
+                originPage.drawRectangle({
                     x: subPdfX - PDF_COVER_X_OFFSET,
                     y: subPdfY - (subFontSize * PDF_COVER_BOTTOM_EXTEND),
                     width: subWidth,
@@ -296,13 +306,11 @@ function tryDrawWithOriginalFont(doc, page, fontInfo, text, fontSize, x, y, colo
 // ============================================
 // Process imported images
 // ============================================
-async function processImportedImages(doc, pages, imageItems, startCount = 0) {
+async function processImportedImages(doc, pages, imageItems) {
     const imported = imageItems.filter(img => img.type === 'imported-image' && !img.deleted);
     for (const img of imported) {
-        const pageIdx = img.finalPageIndex != null && img.finalPageIndex >= 0
-            ? img.finalPageIndex
-            : startCount + img.pageNum - 1;
-        const page = pages[pageIdx];
+        const pageIdx = img.finalPageIndex;
+        const page = pageIdx != null && pageIdx >= 0 ? pages[pageIdx] : null;
         if (!page) continue;
         const pageHeight = page.getHeight();
 
@@ -328,63 +336,64 @@ async function processImportedImages(doc, pages, imageItems, startCount = 0) {
 // ============================================
 // Process moved/resized/deleted existing images
 // ============================================
-function processMovedImages(doc, pages, imageItems, startCount = 0) {
+function processMovedImages(doc, pages, imageItems) {
     const modified = imageItems.filter(img =>
         img.type !== 'imported-image' &&
         (img.deleted || img.moveOffsetX !== 0 || img.moveOffsetY !== 0 || img.resizedWidth || img.resizedHeight)
     );
 
-    const byPage = {};
     for (const img of modified) {
-        const pageIdx = img.finalPageIndex != null && img.finalPageIndex >= 0
-            ? img.finalPageIndex
-            : startCount + img.pageNum - 1;
-        if (!byPage[pageIdx]) byPage[pageIdx] = [];
-        byPage[pageIdx].push(img);
-    }
-
-    for (const [pageIdx, items] of Object.entries(byPage)) {
-        const page = pages[parseInt(pageIdx)];
+        const pageIdx = img.finalPageIndex;
+        const page = pageIdx != null && pageIdx >= 0 ? pages[pageIdx] : null;
         if (!page) continue;
+        // Existing images always originate on an original PDF page; covers and
+        // the XObject lookup use that page, the redraw goes on the target page.
+        const originPage = (img.originPageIndex != null && pages[img.originPageIndex]) || page;
 
-        for (const img of items) {
-            const bgColor = img.bgColor || { r: 1, g: 1, b: 1 };
-            const pageHeight = page.getHeight();
+        const bgColor = img.bgColor || { r: 1, g: 1, b: 1 };
+        const originPageHeight = originPage.getHeight();
+        const pageHeight = page.getHeight();
 
-            // Convert original position from canvas pixels to PDF coordinates
-            const pdfX = img.cssLeft / img.scale;
-            const pdfY = pageHeight - (img.cssTop + img.cssHeight) / img.scale;
-            const pdfWidth = img.cssWidth / img.scale;
-            const pdfHeight = img.cssHeight / img.scale;
+        // Convert original position from canvas pixels to PDF coordinates
+        const pdfX = img.cssLeft / img.scale;
+        const pdfY = originPageHeight - (img.cssTop + img.cssHeight) / img.scale;
+        const pdfWidth = img.cssWidth / img.scale;
+        const pdfHeight = img.cssHeight / img.scale;
 
-            // Cover original position (with small padding to catch sub-pixel edges)
-            const pad = 2 / img.scale;
-            page.drawRectangle({
-                x: pdfX - pad, y: pdfY - pad,
-                width: pdfWidth + pad * 2, height: pdfHeight + pad * 2,
-                color: PDFLib.rgb(bgColor.r, bgColor.g, bgColor.b),
-            });
+        // Cover original position (with small padding to catch sub-pixel edges)
+        const pad = 2 / img.scale;
+        originPage.drawRectangle({
+            x: pdfX - pad, y: pdfY - pad,
+            width: pdfWidth + pad * 2, height: pdfHeight + pad * 2,
+            color: PDFLib.rgb(bgColor.r, bgColor.g, bgColor.b),
+        });
 
-            if (img.deleted) continue;
+        if (img.deleted) continue;
 
-            // Redraw at new position/size using a PDF content stream.
-            // We compute the final position from the current CSS state (original + all offsets)
-            // rather than incrementally, to avoid compounding Y-flip errors with resize.
-            const newPdfWidth = img.resizedWidth ? img.resizedWidth / img.scale : pdfWidth;
-            const newPdfHeight = img.resizedHeight ? img.resizedHeight / img.scale : pdfHeight;
+        // Redraw at new position/size using a PDF content stream.
+        // We compute the final position from the current CSS state (original + all offsets)
+        // rather than incrementally, to avoid compounding Y-flip errors with resize.
+        const newPdfWidth = img.resizedWidth ? img.resizedWidth / img.scale : pdfWidth;
+        const newPdfHeight = img.resizedHeight ? img.resizedHeight / img.scale : pdfHeight;
 
-            // Final CSS position = original + accumulated move offset (includes resize shifts)
-            const finalCssLeft = img.cssLeft + img.moveOffsetX;
-            const finalCssTop = img.cssTop + img.moveOffsetY;
+        // Final CSS position = original + accumulated move offset (includes resize shifts)
+        const finalCssLeft = img.cssLeft + img.moveOffsetX;
+        const finalCssTop = img.cssTop + img.moveOffsetY;
 
-            // Convert to PDF coordinates (Y flipped, using the NEW height)
-            const newX = finalCssLeft / img.scale;
-            const newY = pageHeight - (finalCssTop + (img.resizedHeight || img.cssHeight)) / img.scale;
+        // Convert to PDF coordinates (Y flipped, using the NEW height, on the target page)
+        const newX = finalCssLeft / img.scale;
+        const newY = pageHeight - (finalCssTop + (img.resizedHeight || img.cssHeight)) / img.scale;
 
-            const xObjectName = findImageXObjectName(page, doc, img.imageSeqIndex);
-            if (xObjectName) {
+        const xObject = findImageXObject(originPage, doc, img.imageSeqIndex);
+        if (xObject) {
+            // The XObject lives in the origin page's resources; when drawing on
+            // a different page, register it there under a fresh name first.
+            const drawName = page === originPage
+                ? xObject.name
+                : addImageXObjectToPage(doc, page, xObject.ref);
+            if (drawName) {
                 addContentStream(doc, page,
-                    `q\n${newPdfWidth} 0 0 ${newPdfHeight} ${newX} ${newY} cm\n/${xObjectName} Do\nQ\n`);
+                    `q\n${newPdfWidth} 0 0 ${newPdfHeight} ${newX} ${newY} cm\n/${drawName} Do\nQ\n`);
             }
         }
     }
@@ -399,14 +408,12 @@ function processMovedImages(doc, pages, imageItems, startCount = 0) {
  * SVG path on the right page. PDF Y is bottom-up while canvas Y is top-down,
  * so we flip Y when constructing the path data.
  */
-function processDrawnStrokes(doc, pages, strokes, startCount = 0) {
+function processDrawnStrokes(doc, pages, strokes) {
     for (const stroke of strokes) {
         if (!stroke.points || stroke.points.length === 0) continue;
 
-        const pageIdx = stroke.finalPageIndex != null && stroke.finalPageIndex >= 0
-            ? stroke.finalPageIndex
-            : startCount;
-        const page = pages[pageIdx];
+        const pageIdx = stroke.finalPageIndex;
+        const page = pageIdx != null && pageIdx >= 0 ? pages[pageIdx] : null;
         if (!page) continue;
 
         const pageWidth = page.getWidth();
@@ -475,11 +482,11 @@ function addContentStream(doc, page, content) {
 }
 
 /**
- * Find the PDF XObject name for an image by its sequential index on the page.
+ * Find the PDF XObject (name + ref) for an image by its sequential index on the page.
  * The sequential index matches the order images appear in the PDF operator list
  * (the same order PDF.js processes them during rendering).
  */
-function findImageXObjectName(page, doc, seqIndex) {
+function findImageXObject(page, doc, seqIndex) {
     try {
         const resources = page.node.Resources();
         if (!resources) return null;
@@ -489,7 +496,7 @@ function findImageXObjectName(page, doc, seqIndex) {
             ? xObjectRef : doc.context.lookup(xObjectRef);
         if (!xObjectDict) return null;
 
-        const imageNames = [];
+        const images = [];
         for (const [name, ref] of xObjectDict.entries()) {
             const nameStr = name.decodeText ? name.decodeText() : name.toString().replace('/', '');
             const obj = doc.context.lookup(ref);
@@ -498,10 +505,39 @@ function findImageXObjectName(page, doc, seqIndex) {
                 ? obj.dict.get(PDFLib.PDFName.of('Subtype'))
                 : obj.get?.(PDFLib.PDFName.of('Subtype'));
             if (subtype?.toString() === '/Image') {
-                imageNames.push(nameStr);
+                images.push({ name: nameStr, ref });
             }
         }
-        return imageNames[seqIndex] || null;
+        return images[seqIndex] || null;
+    } catch (_) {
+        return null;
+    }
+}
+
+/**
+ * Register an existing image XObject ref in another page's resources under a
+ * fresh unique name so a content stream on that page can draw it.
+ * Returns the name (without leading slash), or null on failure.
+ */
+function addImageXObjectToPage(doc, page, ref) {
+    try {
+        const { PDFName, PDFDict } = PDFLib;
+        let resources = page.node.get(PDFName.of('Resources'));
+        resources = resources instanceof PDFDict ? resources : (resources ? doc.context.lookup(resources) : null);
+        if (!resources) {
+            resources = doc.context.obj({});
+            page.node.set(PDFName.of('Resources'), resources);
+        }
+        let xObjects = resources.get(PDFName.of('XObject'));
+        xObjects = xObjects instanceof PDFDict ? xObjects : (xObjects ? doc.context.lookup(xObjects) : null);
+        if (!xObjects) {
+            xObjects = doc.context.obj({});
+            resources.set(PDFName.of('XObject'), xObjects);
+        }
+        let n = 1, name;
+        do { name = `EPFX${n++}`; } while (xObjects.has(PDFName.of(name)));
+        xObjects.set(PDFName.of(name), ref);
+        return name;
     } catch (_) {
         return null;
     }

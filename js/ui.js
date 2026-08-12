@@ -50,8 +50,8 @@ export function initDragDrop(onFileDrop) {
         document.body.classList.remove('drag-over-page');
         const file = e.dataTransfer.files[0];
         if (file && file.type === 'application/pdf') {
+            // loadPDF scrolls to the editor itself once rendering settles
             onFileDrop(file);
-            document.getElementById('editor').scrollIntoView({ behavior: 'smooth', block: 'start' });
         } else if (file) {
             showToast("This is a PDF editor. What part of that was unclear?");
         }
@@ -84,6 +84,60 @@ export function showToast(message) {
         toast.classList.remove('visible');
         setTimeout(() => toast.remove(), 300);
     }, 3000);
+}
+
+// ============================================
+// Choice modal — pick one option from a stacked list
+// ============================================
+
+/**
+ * Show a modal with a list of choice buttons.
+ * @param {string} title
+ * @param {string} label - explanatory text under the title
+ * @param {Array<{label: string, hint?: string, value: any}>} choices
+ * @returns {Promise<any>} the chosen value, or undefined if cancelled
+ */
+export function showChoices(title, label, choices) {
+    return new Promise((resolve) => {
+        const overlay = document.createElement('div');
+        overlay.className = 'modal-overlay';
+
+        overlay.innerHTML = `
+            <div class="modal">
+                <h3 class="modal-title">${title}</h3>
+                <label class="modal-label">${label}</label>
+                <div class="modal-choices"></div>
+                <div class="modal-actions">
+                    <button class="modal-btn modal-btn--cancel">Cancel</button>
+                </div>
+            </div>
+        `;
+
+        const list = overlay.querySelector('.modal-choices');
+        for (const choice of choices) {
+            const btn = document.createElement('button');
+            btn.className = 'modal-choice';
+            btn.innerHTML = `<span class="modal-choice-label">${choice.label}</span>` +
+                (choice.hint ? `<span class="modal-choice-hint">${choice.hint}</span>` : '');
+            btn.addEventListener('click', () => close(choice.value));
+            list.appendChild(btn);
+        }
+
+        document.body.appendChild(overlay);
+        requestAnimationFrame(() => overlay.classList.add('visible'));
+
+        const close = (value) => {
+            overlay.classList.remove('visible');
+            setTimeout(() => overlay.remove(), 300);
+            document.removeEventListener('keydown', onKey);
+            resolve(value);
+        };
+        const onKey = (e) => { if (e.key === 'Escape') close(undefined); };
+
+        overlay.querySelector('.modal-btn--cancel').addEventListener('click', () => close(undefined));
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) close(undefined); });
+        document.addEventListener('keydown', onKey);
+    });
 }
 
 // ============================================

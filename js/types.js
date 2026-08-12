@@ -68,7 +68,8 @@
  * @property {boolean} originalCovered - Whether the original position has been covered on canvas
  * @property {number} cssLeft - Left position in canvas pixels
  * @property {number} cssTop - Top position in canvas pixels
- * @property {HTMLCanvasElement} canvas - The page's canvas element
+ * @property {HTMLCanvasElement} canvas - Canvas of the page the item is currently on (changes on cross-page drag)
+ * @property {HTMLCanvasElement} originCanvas - Canvas of the page the item came from (covers are drawn here)
  * @property {number} renderedFontSize - Font size in canvas pixels
  *
  * Optional properties (set by user interactions):
@@ -95,7 +96,8 @@
  * @property {number} moveOffsetX - Accumulated drag offset in screen pixels
  * @property {number} moveOffsetY - Accumulated drag offset in screen pixels
  * @property {boolean} originalCovered - Whether the original position has been covered
- * @property {HTMLCanvasElement} canvas - The page's canvas element
+ * @property {HTMLCanvasElement} canvas - Canvas of the page the item is currently on (changes on cross-page drag)
+ * @property {HTMLCanvasElement} originCanvas - Canvas of the page the item came from (covers are drawn here)
  *
  * PDF-extracted images only:
  * @property {string} [imageName] - PDF.js XObject name

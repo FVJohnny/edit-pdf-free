@@ -126,6 +126,41 @@
     font-weight: 500;
 }
 
+.modal-choices {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 16px;
+}
+
+.modal-choice {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 14px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-family: inherit;
+    font-size: 0.92rem;
+    cursor: pointer;
+    text-align: left;
+    transition: all var(--transition);
+}
+
+.modal-choice:hover {
+    border-color: var(--accent);
+    background: rgba(232, 68, 68, 0.06);
+}
+
+.modal-choice-hint {
+    color: var(--text-dim);
+    font-size: 0.78rem;
+    white-space: nowrap;
+}
+
 .modal-actions {
     display: flex;
     justify-content: flex-end;
