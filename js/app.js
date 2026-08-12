@@ -1,15 +1,21 @@
-import { initDragDrop, showToast, showChoices } from './ui.js';
-import { renderPDF, setupImageDrag, setupTextDrag, createBlankPageContainer, renderMergedPage } from './renderer.js';
+import { initDragDrop, showToast, showChoices, showPrompt } from './ui.js';
+import { renderPDF, setupImageDrag, setupTextDrag, createBlankPageContainer, renderMergedPage, rerenderAllPages } from './renderer.js';
+import { coverOriginalText, coverOriginalImage, layoutWidth, layoutHeight } from './utils/canvas.js';
 import { makeEditable } from './editor.js';
 import { savePDF, buildPdfBytes } from './saver.js';
 import { undo, redo, onHistoryChange, clearHistory, recordAction } from './history.js';
-import { getActiveTextItem } from './toolbar.js';
+import { getActiveTextItem, hideFormatToolbar } from './toolbar.js';
+import { hideImageToolbar } from './image-toolbar.js';
 import { initDraw, setDrawMode, isDrawMode, setDrawSettings, refreshDrawOverlays } from './draw.js';
 import { initMinimap, rebuildMinimap, scheduleMinimapRebuild } from './minimap.js';
-import { MAX_IMPORT_SCALE } from './utils/constants.js';
+import { initSignature } from './signature.js';
+import { saveSession, loadSession, timeAgo } from './autosave.js';
+import { initSearch } from './search.js';
+import { getMultiSelection, multiSelectionSize, clearMultiSelection } from './selection.js';
+import { MAX_IMPORT_SCALE, FONT_BASELINE_RATIO } from './utils/constants.js';
 
-// PDF.js worker setup
-pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
+// PDF.js worker setup (vendored locally — no CDN dependency)
+pdfjsLib.GlobalWorkerOptions.workerSrc = 'vendor/pdf.worker.min.js';
 
 let pdfDoc = null;
 let pdfBytes = null;
@@ -58,8 +64,86 @@ initMinimap(
     pdfViewer,
     document.getElementById('pdfMinimap'),
     document.getElementById('minimapInner'),
-    document.getElementById('minimapStrip')
+    document.getElementById('minimapStrip'),
+    { onReorder: reorderPage, onDelete: deletePage, onRotate: rotatePage }
 );
+
+/**
+ * Rotate a page 90° clockwise. All pending edits are baked into the document
+ * first, then the rotated PDF is reloaded — same trade-off as session
+ * recovery: the result is exact, but per-item undo history restarts.
+ */
+let rotatingPage = false;
+async function rotatePage(index) {
+    if (rotatingPage || !pdfBytes) return;
+    rotatingPage = true;
+    try {
+        showToast(`Rotating page ${index + 1}…`);
+        const pageOrder = collectSaveState();
+        const edited = await buildPdfBytes(pdfBytes, textItems, imageItems, pageOrder, drawnStrokes);
+        const doc = await PDFLib.PDFDocument.load(edited);
+        const page = doc.getPage(index);
+        page.setRotation(PDFLib.degrees((page.getRotation().angle + 90) % 360));
+        const bytes = await doc.save();
+        const scrollBefore = pdfViewer.scrollTop;
+        await loadPDF(new File([bytes], `${originalFileName}.pdf`, { type: 'application/pdf' }));
+        pdfViewer.scrollTop = scrollBefore;
+    } catch (err) {
+        console.error('Rotate failed:', err);
+        showToast('Could not rotate that page');
+    } finally {
+        rotatingPage = false;
+    }
+}
+
+/** Move the page at DOM index `from` so it sits at index `to` (insertion index). */
+function reorderPage(from, to) {
+    const containers = [...pdfViewer.querySelectorAll(':scope > div')];
+    const moving = containers[from];
+    if (!moving) return;
+    const prevNext = moving.nextSibling;
+    const ref = to >= containers.length ? null : containers[to];
+    pdfViewer.insertBefore(moving, ref);
+    updatePageIndicator();
+
+    recordAction({
+        undo() {
+            pdfViewer.insertBefore(moving, prevNext && prevNext.parentElement === pdfViewer ? prevNext : null);
+            updatePageIndicator();
+        },
+        redo() {
+            pdfViewer.insertBefore(moving, ref && ref.parentElement === pdfViewer ? ref : null);
+            updatePageIndicator();
+        },
+    });
+    showToast(`Page moved to position ${[...pdfViewer.querySelectorAll(':scope > div')].indexOf(moving) + 1}`);
+}
+
+/** Delete the page at DOM index (kept in memory so undo can restore it). */
+function deletePage(index) {
+    const containers = [...pdfViewer.querySelectorAll(':scope > div')];
+    if (containers.length <= 1) {
+        showToast("Can't delete the only page");
+        return;
+    }
+    const container = containers[index];
+    if (!container) return;
+    const next = container.nextSibling;
+    container.remove();
+    updatePageIndicator();
+
+    recordAction({
+        undo() {
+            pdfViewer.insertBefore(container, next && next.parentElement === pdfViewer ? next : null);
+            updatePageIndicator();
+        },
+        redo() {
+            container.remove();
+            updatePageIndicator();
+        },
+    });
+    showToast(`Page ${index + 1} deleted`);
+}
 
 // ============================================
 // Undo / Redo
@@ -92,7 +176,14 @@ document.addEventListener('keydown', (e) => {
     if (e.key === 'Delete' || e.key === 'Backspace') {
         // Don't interfere with text editing
         const activeEl = document.activeElement;
-        if (activeEl && (activeEl.contentEditable === 'true' || activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA')) return;
+        if (activeEl && (activeEl.isContentEditable || activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA')) return;
+
+        // Multi-selection: delete the whole group in one undoable action
+        if (multiSelectionSize() > 0) {
+            e.preventDefault();
+            deleteMultiSelection();
+            return;
+        }
 
         // Try text delete button
         const textItem = getActiveTextItem();
@@ -111,6 +202,39 @@ document.addEventListener('keydown', (e) => {
         }
     }
 });
+
+/** Delete every multi-selected item as one undoable action. */
+function deleteMultiSelection() {
+    const items = getMultiSelection();
+    clearMultiSelection();
+    const entries = items.map(item => ({
+        item,
+        isText: !item.type, // ImageItems carry a `type`, TextItems don't
+        wasModified: item.element.classList.contains('modified'),
+    }));
+    for (const en of entries) {
+        if (en.isText) coverOriginalText(en.item, en.item.lastCoverWidth || en.item.originalWidth);
+        else coverOriginalImage(en.item);
+        en.item.deleted = true;
+        en.item.element.style.display = 'none';
+    }
+    showToast(`${entries.length} element${entries.length === 1 ? '' : 's'} deleted`);
+    recordAction({
+        undo() {
+            for (const en of entries) {
+                en.item.deleted = false;
+                en.item.element.style.display = '';
+                if (en.isText) en.item.element.classList.toggle('modified', en.wasModified || en.item.originalCovered);
+            }
+        },
+        redo() {
+            for (const en of entries) {
+                en.item.deleted = true;
+                en.item.element.style.display = 'none';
+            }
+        },
+    });
+}
 
 // ============================================
 // File input
@@ -133,6 +257,25 @@ newFileBtn.addEventListener('click', () => {
 });
 
 // ============================================
+// Session recovery — offer to restore the autosaved session on arrival
+// ============================================
+(async () => {
+    const session = await loadSession();
+    if (!session) return;
+    const blankBtn = document.getElementById('blankPdfBtn');
+    const recoverBtn = document.createElement('button');
+    recoverBtn.className = 'upload-blank-btn upload-recover-btn';
+    recoverBtn.innerHTML = `
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+        Recover last session — ${session.name}.pdf (${timeAgo(session.savedAt)})`;
+    recoverBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        loadPDF(new File([session.bytes], `${session.name}.pdf`, { type: 'application/pdf' }));
+    });
+    blankBtn.insertAdjacentElement('afterend', recoverBtn);
+})();
+
+// ============================================
 // Start with a blank PDF (no upload needed)
 // ============================================
 document.getElementById('blankPdfBtn').addEventListener('click', async (e) => {
@@ -148,9 +291,42 @@ document.getElementById('blankPdfBtn').addEventListener('click', async (e) => {
 });
 
 // ============================================
-// Drag and drop
+// Drag and drop — PDFs load, images import at the drop position
 // ============================================
-initDragDrop(loadPDF);
+initDragDrop(async (files, point) => {
+    const pdf = files.find(f => f.type === 'application/pdf');
+    if (pdf) {
+        loadPDF(pdf);
+        return;
+    }
+    const images = files.filter(f => f.type === 'image/png' || f.type === 'image/jpeg');
+    if (images.length === 0) {
+        showToast("This is a PDF editor. What part of that was unclear?");
+        return;
+    }
+    if (!pdfDoc) {
+        showToast('Load a PDF first (or start a blank one), then drop your images');
+        return;
+    }
+    // Find the page under the drop point and convert to layout coordinates
+    let dropTarget = null;
+    const containers = pdfViewer.querySelectorAll(':scope > div');
+    for (const container of containers) {
+        const r = container.getBoundingClientRect();
+        if (point.y >= r.top && point.y <= r.bottom) {
+            const canvas = container.querySelector('canvas');
+            const cr = canvas.getBoundingClientRect();
+            const pxScale = layoutWidth(canvas) / cr.width;
+            dropTarget = {
+                page: container,
+                x: (point.x - cr.left) * pxScale,
+                y: (point.y - cr.top) * pxScale,
+            };
+            break;
+        }
+    }
+    await importImages(images, dropTarget);
+});
 
 // ============================================
 // Load PDF
@@ -163,6 +339,21 @@ async function loadPDF(file) {
         pdfBytes = new Uint8Array(arrayBuffer);
 
         const loadingTask = pdfjsLib.getDocument({ data: pdfBytes.slice() });
+        // Password-protected PDFs: ask the user (again on a wrong password)
+        loadingTask.onPassword = async (updatePassword, reason) => {
+            const wrong = reason === pdfjsLib.PasswordResponses.INCORRECT_PASSWORD;
+            const pw = await showPrompt(
+                'Protected PDF',
+                wrong ? 'Incorrect password — try again' : 'This PDF requires a password to open',
+                '',
+                { ext: '', confirmLabel: 'Open', inputType: 'password' }
+            );
+            if (pw === null) {
+                loadingTask.destroy();
+                return;
+            }
+            updatePassword(pw);
+        };
         pdfDoc = await loadingTask.promise;
 
         uploadZone.classList.add('hidden');
@@ -173,6 +364,8 @@ async function loadPDF(file) {
         saveBtn.disabled = false;
 
         clearHistory();
+        hideFormatToolbar();
+        hideImageToolbar();
         addedPages.length = 0;
         mergedPages.length = 0;
         drawnStrokes.length = 0;
@@ -232,12 +425,12 @@ pdfViewer.addEventListener('click', async (e) => {
     const textLayer = targetPage.querySelector('.custom-text-layer');
     if (!canvas || !textLayer) return;
 
-    // Convert click position to canvas coordinates
+    // Convert click position to layout coordinates
     const canvasRect = canvas.getBoundingClientRect();
     const cssLeft = e.clientX - canvasRect.left;
     const cssTop = e.clientY - canvasRect.top;
 
-    const scale = canvas.width / canvas.getBoundingClientRect().width;
+    const scale = layoutWidth(canvas) / canvasRect.width;
     const canvasX = cssLeft * scale;
     const canvasY = cssTop * scale;
 
@@ -261,7 +454,7 @@ pdfViewer.addEventListener('click', async (e) => {
             }
         } catch (_) {}
     }
-    const pdfScale = canvas.width / pdfWidthPts;
+    const pdfScale = layoutWidth(canvas) / pdfWidthPts;
 
     const span = document.createElement('span');
     span.textContent = 'New text';
@@ -289,8 +482,10 @@ pdfViewer.addEventListener('click', async (e) => {
         originalText: '',
         currentText: 'New text',
         index: textItems.length,
-        // Build a transform matrix: [fontSize, 0, 0, fontSize, x, y] in PDF coordinates
-        transform: [defaultFontSize / pdfScale, 0, 0, defaultFontSize / pdfScale, canvasX / pdfScale, (canvas.height - canvasY) / pdfScale],
+        // Build a transform matrix: [fontSize, 0, 0, fontSize, x, y] in PDF coordinates.
+        // canvasY is the span's TOP; the glyph baseline sits ~0.78em lower on
+        // screen, so the PDF baseline must account for it or saved text lands high.
+        transform: [defaultFontSize / pdfScale, 0, 0, defaultFontSize / pdfScale, canvasX / pdfScale, (layoutHeight(canvas) - canvasY - defaultFontSize * FONT_BASELINE_RATIO) / pdfScale],
         width: 0,
         height: defaultFontSize / pdfScale,
         fontName: '',
@@ -335,10 +530,21 @@ importImageBtn.addEventListener('click', () => {
 imageInput.addEventListener('change', async (e) => {
     const files = Array.from(e.target.files);
     imageInput.value = '';
+    await importImages(files);
+});
+
+/**
+ * Import a batch of images: ask for a compression level (unless they're small),
+ * then place them cascading. dropTarget ({page, x, y} in layout px) places them
+ * at a drop position instead of the default top-center.
+ */
+async function importImages(files, dropTarget = null) {
     if (files.length === 0) return;
 
     const totalSize = files.reduce((sum, f) => sum + f.size, 0);
-    const compression = await showChoices(
+    // Small images aren't worth the interruption — import as-is
+    const SKIP_COMPRESSION_BELOW = 300 * 1024;
+    const compression = totalSize < SKIP_COMPRESSION_BELOW ? null : await showChoices(
         'Compress images?',
         `${files.length} image${files.length === 1 ? '' : 's'}, ${formatBytes(totalSize)}. ` +
         'Compression keeps photos looking good while making the PDF much smaller.',
@@ -354,7 +560,7 @@ imageInput.addEventListener('change', async (e) => {
     // Import sequentially, cascading each image down-right so they don't stack
     let importedBytes = 0;
     for (let i = 0; i < files.length; i++) {
-        const item = await importImage(files[i], i * 28, compression);
+        const item = await importImage(files[i], i * 28, compression, dropTarget);
         if (item) importedBytes += item.importedImageBytes.length;
     }
     const sizeNote = compression
@@ -363,10 +569,12 @@ imageInput.addEventListener('change', async (e) => {
     showToast((files.length === 1
         ? 'Image imported — drag to position, resize as needed'
         : `${files.length} images imported — drag to position them`) + sizeNote);
-});
+}
 
-async function importImage(file, cascadeOffset = 0, compression = null) {
-    const { page: targetPage, pageNum } = findVisiblePage();
+async function importImage(file, cascadeOffset = 0, compression = null, dropTarget = null) {
+    const { page: targetPage, pageNum } = dropTarget
+        ? { page: dropTarget.page, pageNum: [...pdfViewer.querySelectorAll(':scope > div')].indexOf(dropTarget.page) + 1 }
+        : findVisiblePage();
     if (!targetPage) return null;
 
     const canvas = targetPage.querySelector('canvas');
@@ -381,27 +589,26 @@ async function importImage(file, cascadeOffset = 0, compression = null) {
     // Scale to fit within the page (max MAX_IMPORT_SCALE of page dimensions)
     const { width: imgWidth, height: imgHeight } = scaleToFit(
         img.naturalWidth, img.naturalHeight,
-        canvas.width * MAX_IMPORT_SCALE,
-        canvas.height * MAX_IMPORT_SCALE
+        layoutWidth(canvas) * MAX_IMPORT_SCALE,
+        layoutHeight(canvas) * MAX_IMPORT_SCALE
     );
 
-    // Place centered horizontally, near the top of the visible area.
-    // cascadeOffset staggers multi-image imports so they don't fully overlap.
-    const viewerRect = pdfViewer.getBoundingClientRect();
-    const pageRect = targetPage.getBoundingClientRect();
-    const visibleTopOnPage = viewerRect.top - pageRect.top;
-    const cssLeft = Math.min((canvas.width - imgWidth) / 2 + cascadeOffset, Math.max(0, canvas.width - imgWidth));
-    const cssTop = Math.min(Math.max(10, visibleTopOnPage + 20) + cascadeOffset, Math.max(0, canvas.height - imgHeight));
-
-    // Compute scale factor (canvas pixels per PDF point). For original pages, derive
-    // from the underlying PDF page; for blank pages, use the dimensions stored on the container.
-    let scale;
-    if (targetPage.dataset.blankPage === 'true') {
-        scale = canvas.width / parseFloat(targetPage.dataset.pdfWidth);
+    // Place at the drop point when given; otherwise centered horizontally near
+    // the top of the visible area. cascadeOffset staggers multi-image imports.
+    let cssLeft, cssTop;
+    if (dropTarget) {
+        cssLeft = Math.min(Math.max(0, dropTarget.x - imgWidth / 2 + cascadeOffset), Math.max(0, layoutWidth(canvas) - imgWidth));
+        cssTop = Math.min(Math.max(0, dropTarget.y - imgHeight / 2 + cascadeOffset), Math.max(0, layoutHeight(canvas) - imgHeight));
     } else {
-        const pdfPage = await pdfDoc.getPage(pageNum);
-        scale = canvas.width / pdfPage.getViewport({ scale: 1 }).width;
+        const viewerRect = pdfViewer.getBoundingClientRect();
+        const pageRect = targetPage.getBoundingClientRect();
+        const visibleTopOnPage = viewerRect.top - pageRect.top;
+        cssLeft = Math.min((layoutWidth(canvas) - imgWidth) / 2 + cascadeOffset, Math.max(0, layoutWidth(canvas) - imgWidth));
+        cssTop = Math.min(Math.max(10, visibleTopOnPage + 20) + cascadeOffset, Math.max(0, layoutHeight(canvas) - imgHeight));
     }
+
+    // Layout pixels per PDF point — every container stores its PDF page width
+    const scale = layoutWidth(canvas) / (parseFloat(targetPage.dataset.pdfWidth) || 612);
 
     // Create the draggable overlay
     const overlay = document.createElement('div');
@@ -498,15 +705,31 @@ async function prepareImage(file, compression = null) {
     const canvas = document.createElement('canvas');
     canvas.width = width;
     canvas.height = height;
-    canvas.getContext('2d').drawImage(img, 0, 0, width, height);
-    const outURL = canvas.toDataURL('image/jpeg', compression?.quality ?? 0.92);
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0, width, height);
+
+    // PNGs with transparency must stay PNG — JPEG would flatten the alpha
+    // channel. Downscaling still applies, so compression is not a no-op.
+    const keepPng = file.type === 'image/png' && canvasHasAlpha(ctx, width, height);
+    const outURL = keepPng
+        ? canvas.toDataURL('image/png')
+        : canvas.toDataURL('image/jpeg', compression?.quality ?? 0.92);
     const outImg = await loadImage(outURL);
     return {
         bytes: dataURLToBytes(outURL),
-        type: 'image/jpeg',
+        type: keepPng ? 'image/png' : 'image/jpeg',
         dataURL: outURL,
         img: outImg,
     };
+}
+
+/** Whether any pixel has alpha < 255 (sampled with a stride for speed). */
+function canvasHasAlpha(ctx, width, height) {
+    const data = ctx.getImageData(0, 0, width, height).data;
+    for (let i = 3; i < data.length; i += 16) {
+        if (data[i] < 255) return true;
+    }
+    return false;
 }
 
 /** Read the EXIF orientation tag (1 = upright) from JPEG bytes; 1 if absent. */
@@ -588,7 +811,17 @@ let sizeEstimateQueued = false;
 
 function scheduleSizeEstimate() {
     clearTimeout(sizeEstimateTimer);
-    sizeEstimateTimer = setTimeout(runSizeEstimate, 700);
+    // Rebuilding the PDF is proportional to its size — back off for big files,
+    // and prefer idle time so the rebuild never competes with interaction.
+    const mb = pdfBytes ? pdfBytes.length / (1024 * 1024) : 0;
+    const delay = mb > 25 ? 3000 : mb > 8 ? 1500 : 700;
+    sizeEstimateTimer = setTimeout(() => {
+        if (typeof requestIdleCallback === 'function') {
+            requestIdleCallback(() => runSizeEstimate(), { timeout: 2000 });
+        } else {
+            runSizeEstimate();
+        }
+    }, delay);
 }
 
 async function runSizeEstimate() {
@@ -599,9 +832,11 @@ async function runSizeEstimate() {
     }
     sizeEstimateRunning = true;
     try {
-        const extraPages = collectSaveState();
-        const bytes = await buildPdfBytes(pdfBytes, textItems, imageItems, extraPages, drawnStrokes);
+        const pageOrder = collectSaveState();
+        const bytes = await buildPdfBytes(pdfBytes, textItems, imageItems, pageOrder, drawnStrokes);
         sizeIndicator.textContent = formatBytes(bytes.length);
+        // The built PDF doubles as the autosave snapshot
+        saveSession(bytes, originalFileName);
     } catch (err) {
         console.error('Size estimate failed:', err);
         sizeIndicator.textContent = '–';
@@ -665,9 +900,37 @@ function applyZoom() {
         // Adjust margin to account for scaled size so pages don't overlap
         const canvas = page.querySelector('canvas');
         if (canvas) {
-            const scaledHeight = canvas.height * currentZoom;
-            const originalHeight = canvas.height;
+            const originalHeight = layoutHeight(canvas);
+            const scaledHeight = originalHeight * currentZoom;
             page.style.marginBottom = (scaledHeight - originalHeight + 20) + 'px';
+        }
+    }
+    scheduleZoomRerender();
+}
+
+// Re-render page backings at the zoom resolution (debounced) so zoomed-in
+// pages are sharp instead of CSS-upscaled, then repaint covers and minimap.
+let zoomRerenderTimer = null;
+function scheduleZoomRerender() {
+    clearTimeout(zoomRerenderTimer);
+    zoomRerenderTimer = setTimeout(async () => {
+        await rerenderAllPages(pdfViewer, currentZoom, replayCovers);
+        rebuildMinimap();
+    }, 350);
+}
+
+/** After a page's canvas was re-rendered, repaint the covers that were on it. */
+function replayCovers(container, canvas) {
+    for (const item of textItems) {
+        if (item.originalCovered && (item.originCanvas || item.canvas) === canvas) {
+            item.originalCovered = false;
+            coverOriginalText(item, item.lastCoverWidth || item.originalWidth);
+        }
+    }
+    for (const item of imageItems) {
+        if (item.originalCovered && (item.originCanvas || item.canvas) === canvas) {
+            item.originalCovered = false;
+            coverOriginalImage(item);
         }
     }
 }
@@ -747,6 +1010,23 @@ addPageAfterBtn.addEventListener('click', () => addBlankPage('end'));
 // ============================================
 initDraw(pdfViewer, drawnStrokes);
 
+// ============================================
+// Find text
+// ============================================
+initSearch(pdfViewer, textItems);
+
+// ============================================
+// Signature tool — the drawn signature becomes a regular imported image
+// ============================================
+initSignature((dataURL) => {
+    if (!pdfDoc) {
+        showToast('Load a PDF first');
+        return;
+    }
+    const file = new File([dataURLToBytes(dataURL)], 'signature.png', { type: 'image/png' });
+    importImages([file]);
+});
+
 function syncDrawSettingsFromUI() {
     setDrawSettings({
         color: drawColor.value,
@@ -757,18 +1037,52 @@ function syncDrawSettingsFromUI() {
     drawOpacityLabel.textContent = drawOpacity.value + '%';
 }
 
-function toggleDrawMode(force) {
-    const next = typeof force === 'boolean' ? force : !isDrawMode();
+function selectDrawTool(btn) {
+    if (!btn) return;
+    document.querySelectorAll('.draw-tool').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    const tool = btn.dataset.tool;
+    // The highlighter defaults to a marker yellow
+    if (tool === 'highlighter' && drawColor.value === '#e84444') {
+        drawColor.value = '#ffe83a';
+    }
+    setDrawSettings({ tool });
+    syncDrawSettingsFromUI();
+}
+
+document.querySelectorAll('.draw-tool').forEach(btn => {
+    btn.addEventListener('click', () => selectDrawTool(btn));
+});
+
+// Draw (pen/highlighter) and Shapes (rect/circle/arrow/star) share the same
+// machinery; the palette shows only the active group's tools.
+const shapesBtn = document.getElementById('shapesBtn');
+let paletteGroup = 'draw';
+
+function toggleDrawMode(force, group = paletteGroup) {
+    const next = typeof force === 'boolean' ? force : !(isDrawMode() && paletteGroup === group);
+    paletteGroup = group;
     setDrawMode(next);
-    drawBtn.classList.toggle('active', next);
+    drawPalette.dataset.group = group;
+    drawBtn.classList.toggle('active', next && group === 'draw');
+    shapesBtn.classList.toggle('active', next && group === 'shapes');
     drawPalette.style.display = next ? 'flex' : 'none';
-    if (next) syncDrawSettingsFromUI();
+    if (next) {
+        const active = document.querySelector('.draw-tool.active');
+        if (!active || active.dataset.group !== group) {
+            selectDrawTool(document.querySelector(`.draw-tool[data-group="${group}"]`));
+        }
+        syncDrawSettingsFromUI();
+    }
 }
 
 drawBtn.addEventListener('click', () => {
-    const next = !isDrawMode();
-    if (next && addTextMode) setAddTextMode(false);
-    toggleDrawMode(next);
+    if (addTextMode) setAddTextMode(false);
+    toggleDrawMode(undefined, 'draw');
+});
+shapesBtn.addEventListener('click', () => {
+    if (addTextMode) setAddTextMode(false);
+    toggleDrawMode(undefined, 'shapes');
 });
 drawDoneBtn.addEventListener('click', () => toggleDrawMode(false));
 drawColor.addEventListener('input', syncDrawSettingsFromUI);
@@ -881,23 +1195,33 @@ function collectSaveState() {
         stroke.finalPageIndex = c ? pageContainers.indexOf(c) : -1;
     }
 
-    // Walk the DOM in order: each blank/merged container becomes an extra page
-    // to insert at its DOM position. Original pages are already in the doc.
-    const extraPages = [];
-    for (let i = 0; i < pageContainers.length; i++) {
-        const container = pageContainers[i];
+    // Walk the DOM in order: every container becomes one page of the output,
+    // in exactly this order (this is what makes reorder/delete work).
+    const pageOrder = [];
+    for (const container of pageContainers) {
         if (container.dataset.blankPage === 'true') {
             const entry = addedPages.find(p => p.container === container);
-            if (entry) extraPages.push({ kind: 'blank', domIndex: i, entry });
+            if (entry) pageOrder.push({ kind: 'blank', entry });
         } else if (container.dataset.mergedPage === 'true') {
             const entry = mergedPages.find(p => p.container === container);
-            if (entry) extraPages.push({ kind: 'merged', domIndex: i, entry });
+            if (entry) pageOrder.push({ kind: 'merged', entry });
+        } else {
+            pageOrder.push({ kind: 'original', sourcePageIndex: parseInt(container.dataset.originalPageIndex, 10) || 0 });
         }
     }
-    return extraPages;
+    return pageOrder;
 }
 
 saveBtn.addEventListener('click', () => {
-    const extraPages = collectSaveState();
-    savePDF(pdfBytes, textItems, imageItems, extraPages, drawnStrokes, originalFileName);
+    const pageOrder = collectSaveState();
+    savePDF(pdfBytes, textItems, imageItems, pageOrder, drawnStrokes, originalFileName);
+});
+
+// ============================================
+// Delete current page — the one in view, with everything on it (undoable)
+// ============================================
+document.getElementById('deletePageBtn').addEventListener('click', () => {
+    if (!pdfBytes) return;
+    const { index } = currentPageContainer();
+    if (index >= 0) deletePage(index);
 });

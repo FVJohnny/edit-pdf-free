@@ -167,6 +167,12 @@ body.drag-over-page::after {
     background: rgba(232, 68, 68, 0.06);
 }
 
+.upload-recover-btn {
+    margin-left: 10px;
+    border-color: rgba(232, 68, 68, 0.45);
+    color: var(--text);
+}
+
 .upload-zone.hidden {
     display: none;
 }
@@ -179,6 +185,12 @@ body.drag-over-page::after {
     padding: 12px 20px;
     background: var(--surface);
     border-bottom: 1px solid var(--border);
+    gap: 10px;
+}
+
+.toolbar-btn {
+    white-space: nowrap;
+    flex: 0 0 auto;
 }
 
 .toolbar.visible {
@@ -190,6 +202,16 @@ body.drag-over-page::after {
     display: flex;
     align-items: center;
     gap: 12px;
+}
+
+/* Let the filename shrink with ellipsis so the row never wraps */
+.toolbar-left {
+    min-width: 0;
+    flex: 1 1 auto;
+}
+
+.toolbar-right {
+    flex: 0 0 auto;
 }
 
 .toolbar-btn {
@@ -232,16 +254,42 @@ body.drag-over-page::after {
     font-size: 0.85rem;
     color: var(--text-dim);
     font-weight: 400;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
 }
 
 /* PDF Tools Bar */
 .pdf-tools {
     display: none;
     align-items: center;
-    gap: 8px;
-    padding: 8px 20px;
+    gap: 8px 14px;
+    padding: 8px 14px;
     background: var(--surface);
     border-bottom: 1px solid var(--border);
+    /* Groups wrap as whole units — related tools always stay together */
+    flex-wrap: wrap;
+}
+
+.pdf-tools > * {
+    flex: 0 0 auto;
+}
+
+/* A group of related tools: subtle pill so the separation reads visually */
+.tool-group {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    flex: 0 0 auto;
+    padding: 4px 6px;
+    background: rgba(255, 255, 255, 0.025);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 8px;
+}
+
+.pdf-tools-btn {
+    white-space: nowrap;
 }
 
 .pdf-tools.visible {
@@ -251,8 +299,8 @@ body.drag-over-page::after {
 .pdf-tools-btn {
     display: inline-flex;
     align-items: center;
-    gap: 5px;
-    padding: 5px 10px;
+    gap: 4px;
+    padding: 5px 8px;
     background: rgba(255, 255, 255, 0.04);
     color: var(--text-muted);
     border: 1px solid var(--border);
@@ -349,6 +397,17 @@ body.drag-over-page::after {
     min-width: 0;
 }
 
+/* Touch: these elements handle their own pointer gestures (drag/resize/draw/
+   minimap-scrub), so the browser must not hijack the gesture for scrolling.
+   Text spans intentionally keep default touch-action so pages stay scrollable
+   by touch — text is still editable by tap. */
+.draggable-image,
+.img-resize-handle,
+.pdf-viewer.draw-mode .draw-overlay,
+.pdf-minimap {
+    touch-action: none;
+}
+
 /* Minimap scrollbar — thin live preview of all pages with a viewport strip */
 .pdf-minimap {
     flex: 0 0 64px;
@@ -372,11 +431,80 @@ body.drag-over-page::after {
     will-change: transform;
 }
 
+.pdf-minimap-page {
+    position: relative;
+}
+
+.pdf-minimap-page.dragging {
+    opacity: 0.45;
+}
+
 .pdf-minimap-thumb {
     display: block;
     width: 100%;
     border-radius: 2px;
     box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+
+/* Per-page controls: reorder handle + rotate + delete, shown on hover */
+.minimap-handle,
+.minimap-rotate,
+.minimap-delete {
+    position: absolute;
+    top: 2px;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    padding: 0;
+    border: none;
+    border-radius: 4px;
+    background: rgba(12, 12, 15, 0.75);
+    color: #fff;
+    font-size: 10px;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.minimap-handle {
+    left: 2px;
+    cursor: grab;
+    touch-action: none;
+}
+
+.minimap-delete {
+    right: 2px;
+}
+
+.minimap-rotate {
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 12px;
+}
+
+.minimap-delete:hover {
+    background: var(--accent);
+}
+
+.minimap-rotate:hover {
+    background: rgba(255, 255, 255, 0.25);
+}
+
+.pdf-minimap-page:hover .minimap-handle,
+.pdf-minimap-page:hover .minimap-rotate,
+.pdf-minimap-page:hover .minimap-delete {
+    display: flex;
+}
+
+.minimap-drop-marker {
+    position: absolute;
+    left: 2px;
+    right: 2px;
+    height: 3px;
+    border-radius: 2px;
+    background: var(--accent);
+    pointer-events: none;
 }
 
 .pdf-minimap-strip {
@@ -389,9 +517,40 @@ body.drag-over-page::after {
     pointer-events: none;
 }
 
+/* Icon-only tool buttons when the bar wouldn't fit (tooltips still describe them) */
+@media (max-width: 1200px) {
+    .pdf-tools-btn-label {
+        display: none;
+    }
+}
+
 @media (max-width: 768px) {
     .pdf-minimap {
         display: none;
+    }
+
+    .search-bar {
+        right: 8px;
+        left: 8px;
+        max-width: none;
+    }
+
+    .pdf-tools {
+        padding: 8px 12px;
+        gap: 6px;
+    }
+
+    .toolbar {
+        padding: 10px 12px;
+        gap: 8px;
+    }
+
+    .editor-section {
+        padding: 56px 10px 16px;
+    }
+
+    .pdf-viewer {
+        padding: 10px;
     }
 }
 
@@ -576,6 +735,9 @@ body.drag-over-page::after {
 .image-toolbar {
     position: fixed;
     z-index: 2000;
+    max-width: calc(100vw - 16px);
+    flex-wrap: wrap;
+    row-gap: 4px;
     background: #1a1a1a;
     border: 1px solid #333;
     border-radius: 8px;
@@ -601,6 +763,11 @@ body.drag-over-page::after {
     display: flex;
     align-items: center;
     gap: 2px;
+    /* Never wider than the screen — wrap into a second row on small viewports */
+    max-width: calc(100vw - 16px);
+    flex-wrap: wrap;
+    row-gap: 4px;
+    justify-content: center;
     box-shadow: 0 4px 20px rgba(0,0,0,0.4);
     user-select: none;
 }
@@ -651,6 +818,23 @@ body.drag-over-page::after {
     margin: 0 3px;
 }
 
+.fmt-select {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    font-family: inherit;
+    font-size: 0.78rem;
+    padding: 4px 6px;
+    cursor: pointer;
+    max-width: 96px;
+}
+
+.fmt-select:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+
 .fmt-color {
     -webkit-appearance: none;
     appearance: none;
@@ -682,20 +866,149 @@ body.drag-over-page::after {
    Draw Palette
    ============================================ */
 
-.draw-palette {
+/* Search bar + match highlights */
+.search-bar {
     position: fixed;
-    z-index: 2000;
-    top: 16px;
-    left: 50%;
-    transform: translateX(-50%);
-    background: #1a1a1a;
-    border: 1px solid #333;
-    border-radius: 8px;
+    top: 110px;
+    right: 96px;
+    z-index: 200;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 10px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.45);
+}
+
+.search-input {
+    width: 180px;
+    padding: 6px 10px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    font-family: inherit;
+    font-size: 0.85rem;
+}
+
+.search-input:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+
+.search-count {
+    font-size: 0.78rem;
+    color: var(--text-dim);
+    min-width: 34px;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+}
+
+/* Shape resize handles — corners (rect/circle/star) or endpoints (arrow) */
+.shape-handles {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    /* Above the draw overlay: grabbing a handle must win over drawing a new
+       shape, so a selected figure can be resized while the tool is active */
+    z-index: 30;
+}
+
+.shape-selection-rect {
+    position: absolute;
+    border: 1.5px dashed rgba(232, 68, 68, 0.85);
+    border-radius: 2px;
+    pointer-events: none;
+}
+
+.shape-handle {
+    position: absolute;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--accent);
+    border: 2px solid #fff;
+    transform: translate(-50%, -50%);
+    pointer-events: auto;
+    cursor: nwse-resize;
+    touch-action: none;
+}
+
+.shape-handle[data-role="ne"],
+.shape-handle[data-role="sw"] {
+    cursor: nesw-resize;
+}
+
+/* Drawn strokes: clickable/draggable outside draw mode */
+.draw-overlay path.stroke-path {
+    pointer-events: visibleStroke;
+    cursor: move;
+    touch-action: none;
+}
+
+.pdf-viewer.draw-mode .draw-overlay path.stroke-path {
+    pointer-events: none; /* don't block drawing new strokes on top */
+}
+
+.draw-overlay path.stroke-selected {
+    filter: drop-shadow(0 0 4px rgba(232, 68, 68, 0.9));
+}
+
+/* Touch-armed text: first tap on mobile selects it for dragging */
+.editable-text.touch-armed {
+    outline: 2px dashed rgba(232, 68, 68, 0.8);
+    outline-offset: 2px;
+    background: rgba(232, 68, 68, 0.06);
+}
+
+/* Multi-selection (Shift+click) */
+.editable-text.multi-selected,
+.draggable-image.multi-selected {
+    outline: 2px dashed #4a9eff !important;
+    outline-offset: 1px;
+}
+
+.editable-text.search-hit {
+    background: rgba(255, 232, 58, 0.35);
+    outline: 1px solid rgba(255, 200, 0, 0.6);
+}
+
+.editable-text.search-active {
+    background: rgba(255, 150, 0, 0.45);
+    outline: 2px solid rgba(255, 130, 0, 0.9);
+}
+
+.draw-tools {
+    display: flex;
+    gap: 2px;
+}
+
+/* The palette shows only the active group's tools (draw vs shapes) */
+.draw-palette[data-group="draw"] .draw-tool[data-group="shapes"],
+.draw-palette[data-group="shapes"] .draw-tool[data-group="draw"] {
+    display: none;
+}
+
+.draw-tool.active {
+    background: var(--accent);
+    color: #fff;
+    border-radius: 6px;
+}
+
+/* Lives inside the sticky editor bars — always visible while drawing,
+   scrolls with the editor, immune to mobile pinch-zoom fixed-position quirks */
+.draw-palette {
+    flex-wrap: wrap;
+    row-gap: 6px;
+    justify-content: center;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
     padding: 6px 10px;
     display: flex;
     align-items: center;
     gap: 4px;
-    box-shadow: 0 4px 20px rgba(0,0,0,0.4);
     user-select: none;
 }
 

@@ -48,13 +48,10 @@ export function initDragDrop(onFileDrop) {
         e.preventDefault();
         dragCounter = 0;
         document.body.classList.remove('drag-over-page');
-        const file = e.dataTransfer.files[0];
-        if (file && file.type === 'application/pdf') {
-            // loadPDF scrolls to the editor itself once rendering settles
-            onFileDrop(file);
-        } else if (file) {
-            showToast("This is a PDF editor. What part of that was unclear?");
-        }
+        const files = Array.from(e.dataTransfer.files);
+        if (files.length === 0) return;
+        // The app decides: PDFs load, images import at the drop position
+        onFileDrop(files, { x: e.clientX, y: e.clientY });
     });
 }
 
@@ -86,6 +83,13 @@ export function showToast(message) {
     }, 3000);
 }
 
+/** Escape a string for safe interpolation into innerHTML. */
+function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, (c) => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+    }[c]));
+}
+
 // ============================================
 // Choice modal — pick one option from a stacked list
 // ============================================
@@ -104,8 +108,8 @@ export function showChoices(title, label, choices) {
 
         overlay.innerHTML = `
             <div class="modal">
-                <h3 class="modal-title">${title}</h3>
-                <label class="modal-label">${label}</label>
+                <h3 class="modal-title">${escapeHtml(title)}</h3>
+                <label class="modal-label">${escapeHtml(label)}</label>
                 <div class="modal-choices"></div>
                 <div class="modal-actions">
                     <button class="modal-btn modal-btn--cancel">Cancel</button>
@@ -117,8 +121,8 @@ export function showChoices(title, label, choices) {
         for (const choice of choices) {
             const btn = document.createElement('button');
             btn.className = 'modal-choice';
-            btn.innerHTML = `<span class="modal-choice-label">${choice.label}</span>` +
-                (choice.hint ? `<span class="modal-choice-hint">${choice.hint}</span>` : '');
+            btn.innerHTML = `<span class="modal-choice-label">${escapeHtml(choice.label)}</span>` +
+                (choice.hint ? `<span class="modal-choice-hint">${escapeHtml(choice.hint)}</span>` : '');
             btn.addEventListener('click', () => close(choice.value));
             list.appendChild(btn);
         }
@@ -143,22 +147,22 @@ export function showChoices(title, label, choices) {
 // ============================================
 // Custom prompt modal
 // ============================================
-export function showPrompt(title, label, defaultValue) {
+export function showPrompt(title, label, defaultValue, { ext = '.pdf', confirmLabel = 'Save', inputType = 'text' } = {}) {
     return new Promise((resolve) => {
         const overlay = document.createElement('div');
         overlay.className = 'modal-overlay';
 
         overlay.innerHTML = `
             <div class="modal">
-                <h3 class="modal-title">${title}</h3>
-                <label class="modal-label">${label}</label>
+                <h3 class="modal-title">${escapeHtml(title)}</h3>
+                <label class="modal-label">${escapeHtml(label)}</label>
                 <div class="modal-input-row">
-                    <input type="text" class="modal-input" value="${defaultValue}" />
-                    <span class="modal-ext">.pdf</span>
+                    <input type="${escapeHtml(inputType)}" class="modal-input" />
+                    ${ext ? `<span class="modal-ext">${escapeHtml(ext)}</span>` : ''}
                 </div>
                 <div class="modal-actions">
                     <button class="modal-btn modal-btn--cancel">Cancel</button>
-                    <button class="modal-btn modal-btn--confirm">Save</button>
+                    <button class="modal-btn modal-btn--confirm">${escapeHtml(confirmLabel)}</button>
                 </div>
             </div>
         `;
@@ -167,6 +171,7 @@ export function showPrompt(title, label, defaultValue) {
         requestAnimationFrame(() => overlay.classList.add('visible'));
 
         const input = overlay.querySelector('.modal-input');
+        input.value = defaultValue ?? '';
         input.focus();
         input.select();
 

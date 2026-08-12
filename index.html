@@ -100,54 +100,111 @@
                     </div>
                 </div>
 
-                <!-- PDF Tools Bar (visible when PDF loaded) -->
+                <!-- PDF Tools Bar (visible when PDF loaded) — tools are grouped by
+                     purpose; groups wrap as whole units on narrow screens -->
                 <div class="pdf-tools" id="pdfTools">
-                    <button class="pdf-tools-btn" id="undoBtn" data-tip="Undo (Ctrl+Z)" data-tip-pos="bottom" disabled>
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
-                    </button>
-                    <button class="pdf-tools-btn" id="redoBtn" data-tip="Redo (Ctrl+Shift+Z)" data-tip-pos="bottom" disabled>
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.13-9.36L23 10"/></svg>
-                    </button>
-                    <span class="pdf-tools-sep"></span>
-                    <button class="pdf-tools-btn" id="addTextBtn" data-tip="Click on the PDF to place new text" data-tip-pos="bottom">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg>
-                        Add Text
-                    </button>
-                    <button class="pdf-tools-btn" id="importImageBtn" data-tip="Import a PNG or JPG image" data-tip-pos="bottom">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
-                        Import Image
-                    </button>
-                    <button class="pdf-tools-btn" id="drawBtn" data-tip="Draw freely on the PDF" data-tip-pos="bottom">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
-                        Draw
-                    </button>
+                    <div class="tool-group tool-group--history">
+                        <button class="pdf-tools-btn" id="undoBtn" aria-label="Undo" data-tip="Undo (Ctrl+Z)" data-tip-pos="bottom" disabled>
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+                        </button>
+                        <button class="pdf-tools-btn" id="redoBtn" aria-label="Redo" data-tip="Redo (Ctrl+Shift+Z)" data-tip-pos="bottom" disabled>
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.13-9.36L23 10"/></svg>
+                        </button>
+                    </div>
+                    <div class="tool-group tool-group--content">
+                        <button class="pdf-tools-btn" id="addTextBtn" data-tip="Click on the PDF to place new text" data-tip-pos="bottom">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg>
+                            <span class="pdf-tools-btn-label">Add Text</span>
+                        </button>
+                        <button class="pdf-tools-btn" id="importImageBtn" data-tip="Import PNG or JPG images" data-tip-pos="bottom">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+                            <span class="pdf-tools-btn-label">Import Image</span>
+                        </button>
+                        <button class="pdf-tools-btn" id="drawBtn" data-tip="Draw freely on the PDF" data-tip-pos="bottom">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
+                            <span class="pdf-tools-btn-label">Draw</span>
+                        </button>
+                        <button class="pdf-tools-btn" id="shapesBtn" data-tip="Insert shapes: rectangle, circle, arrow, star" data-tip-pos="bottom">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="3" y="3" width="10" height="10" rx="1"/><circle cx="16.5" cy="16.5" r="5.5"/></svg>
+                            <span class="pdf-tools-btn-label">Shapes</span>
+                        </button>
+                        <button class="pdf-tools-btn" id="signBtn" data-tip="Draw a signature and place it on the PDF" data-tip-pos="bottom">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/><path d="M2 22h20" opacity="0.4"/></svg>
+                            <span class="pdf-tools-btn-label">Sign</span>
+                        </button>
+                    </div>
+                    <div class="tool-group tool-group--pages">
+                        <button class="pdf-tools-btn" id="addPageBeforeBtn" data-tip="Insert a blank page before the current page" data-tip-pos="bottom">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg>
+                            <span class="pdf-tools-btn-label">Page Before</span>
+                        </button>
+                        <button class="pdf-tools-btn" id="addPageAfterBtn" data-tip="Insert a blank page after the current page" data-tip-pos="bottom">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg>
+                            <span class="pdf-tools-btn-label">Page After</span>
+                        </button>
+                        <button class="pdf-tools-btn" id="deletePageBtn" data-tip="Delete the current page and everything on it" data-tip-pos="bottom">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
+                            <span class="pdf-tools-btn-label">Delete Page</span>
+                        </button>
+                        <button class="pdf-tools-btn" id="mergePdfBtn" data-tip="Append another PDF's pages to the end" data-tip-pos="bottom">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="11" x2="12" y2="18"/><polyline points="9 15 12 18 15 15"/></svg>
+                            <span class="pdf-tools-btn-label">Merge PDF</span>
+                        </button>
+                    </div>
+                    <div class="tool-group tool-group--view">
+                        <button class="pdf-tools-btn" id="findBtn" aria-label="Find text" data-tip="Find text (Ctrl+F)" data-tip-pos="bottom">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                        </button>
+                        <span class="pdf-tools-pages" id="pageIndicator" data-tip="Current page / total pages" data-tip-pos="bottom">Page 1 / 1</span>
+                        <span class="pdf-tools-pages" id="sizeIndicator" data-tip="Size of the PDF if saved right now" data-tip-pos="bottom">–</span>
+                        <button class="pdf-tools-btn" id="zoomOutBtn" aria-label="Zoom out" data-tip="Zoom out" data-tip-pos="bottom">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
+                        </button>
+                        <span class="pdf-tools-zoom" id="zoomLabel">100%</span>
+                        <button class="pdf-tools-btn" id="zoomInBtn" aria-label="Zoom in" data-tip="Zoom in" data-tip-pos="bottom">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
+                        </button>
+                    </div>
                     <input type="file" id="imageInput" accept="image/png,image/jpeg,image/jpg" multiple class="hidden-input">
-                    <span class="pdf-tools-sep"></span>
-                    <button class="pdf-tools-btn" id="addPageBeforeBtn" data-tip="Insert a blank page before the current page" data-tip-pos="bottom">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg>
-                        Page Before
-                    </button>
-                    <button class="pdf-tools-btn" id="addPageAfterBtn" data-tip="Insert a blank page after the current page" data-tip-pos="bottom">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg>
-                        Page After
-                    </button>
-                    <button class="pdf-tools-btn" id="mergePdfBtn" data-tip="Append another PDF's pages to the end" data-tip-pos="bottom">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg>
-                        Merge PDF
-                    </button>
                     <input type="file" id="mergePdfInput" accept=".pdf,application/pdf" class="hidden-input">
-                    <span class="pdf-tools-sep"></span>
-                    <span class="pdf-tools-pages" id="pageIndicator" data-tip="Current page / total pages" data-tip-pos="bottom">Page 1 / 1</span>
-                    <span class="pdf-tools-sep"></span>
-                    <span class="pdf-tools-pages" id="sizeIndicator" data-tip="Size of the PDF if saved right now" data-tip-pos="bottom">–</span>
-                    <span class="pdf-tools-sep"></span>
-                    <button class="pdf-tools-btn" id="zoomOutBtn" data-tip="Zoom out" data-tip-pos="bottom">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
-                    </button>
-                    <span class="pdf-tools-zoom" id="zoomLabel">100%</span>
-                    <button class="pdf-tools-btn" id="zoomInBtn" data-tip="Zoom in" data-tip-pos="bottom">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
-                    </button>
+                </div>
+                <div id="drawPalette" class="draw-palette" data-group="draw" style="display:none;">
+                    <div class="draw-tools" role="group" aria-label="Tool">
+                        <button class="fmt-btn draw-tool active" data-tool="pen" data-group="draw" data-tip="Pen" aria-label="Pen">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
+                        </button>
+                        <button class="fmt-btn draw-tool" data-tool="highlighter" data-group="draw" data-tip="Highlighter" aria-label="Highlighter">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l6 6"/><path d="M4 20h6l10-10a2.828 2.828 0 1 0-4-4L6 16l-2 4z" opacity="0.6"/></svg>
+                        </button>
+                        <button class="fmt-btn draw-tool" data-tool="rect" data-group="shapes" data-tip="Rectangle" aria-label="Rectangle">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="14" rx="1"/></svg>
+                        </button>
+                        <button class="fmt-btn draw-tool" data-tool="circle" data-group="shapes" data-tip="Circle" aria-label="Circle">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/></svg>
+                        </button>
+                        <button class="fmt-btn draw-tool" data-tool="arrow" data-group="shapes" data-tip="Arrow" aria-label="Arrow">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="20" x2="20" y2="4"/><polyline points="9 4 20 4 20 15"/></svg>
+                        </button>
+                        <button class="fmt-btn draw-tool" data-tool="star" data-group="shapes" data-tip="Star" aria-label="Star">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+                        </button>
+                    </div>
+                    <span class="fmt-sep"></span>
+                    <input type="color" id="drawColor" aria-label="Stroke color" class="fmt-color" data-tip="Stroke color" value="#e84444">
+                    <span class="fmt-sep"></span>
+                    <label class="draw-slider" data-tip="Brush size">
+                        <span>Size</span>
+                        <input type="range" id="drawSize" min="1" max="40" step="1" value="4">
+                        <span class="draw-slider-value" id="drawSizeLabel">4</span>
+                    </label>
+                    <span class="fmt-sep"></span>
+                    <label class="draw-slider" data-tip="Opacity">
+                        <span>Opacity</span>
+                        <input type="range" id="drawOpacity" min="10" max="100" step="5" value="100">
+                        <span class="draw-slider-value" id="drawOpacityLabel">100%</span>
+                    </label>
+                    <span class="fmt-sep"></span>
+                    <button class="fmt-btn" id="drawDone" data-tip="Exit draw mode">Done</button>
                 </div>
                 </div>
 
@@ -162,7 +219,7 @@
                             <small>Click on any text to edit it directly</small>
                         </div>
                     </div>
-                    <div class="pdf-minimap" id="pdfMinimap">
+                    <div class="pdf-minimap" id="pdfMinimap" role="scrollbar" aria-label="Document overview — click or drag to scroll">
                         <div class="pdf-minimap-inner" id="minimapInner"></div>
                         <div class="pdf-minimap-strip" id="minimapStrip"></div>
                     </div>
@@ -171,51 +228,76 @@
         </div>
     </section>
 
-    <!-- Floating draw palette -->
-    <div id="drawPalette" class="draw-palette" style="display:none;">
-        <input type="color" id="drawColor" class="fmt-color" data-tip="Stroke color" value="#e84444">
+    <!-- Floating search bar -->
+    <div id="searchBar" class="search-bar" style="display:none;">
+        <input type="text" id="searchInput" class="search-input" placeholder="Find text…" aria-label="Find text">
+        <span class="search-count" id="searchCount">0/0</span>
+        <button class="fmt-btn fmt-btn--sm" id="searchPrev" aria-label="Previous match" data-tip="Previous (Shift+Enter)">↑</button>
+        <button class="fmt-btn fmt-btn--sm" id="searchNext" aria-label="Next match" data-tip="Next (Enter)">↓</button>
+        <button class="fmt-btn fmt-btn--sm" id="searchClose" aria-label="Close search" data-tip="Close (Esc)">✕</button>
+    </div>
+
+
+    <!-- Floating stroke/shape toolbar -->
+    <div id="strokeToolbar" class="image-toolbar" style="display:none;">
+        <input type="color" id="strokeColorInput" class="fmt-color" aria-label="Line color" data-tip="Line color">
+        <input type="color" id="strokeFillInput" class="fmt-color" aria-label="Fill color" data-tip="Fill color">
+        <button class="fmt-btn" id="strokeFillNone" aria-label="Transparent fill" data-tip="Transparent fill">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><line x1="5.6" y1="5.6" x2="18.4" y2="18.4"/></svg>
+        </button>
         <span class="fmt-sep"></span>
-        <label class="draw-slider" data-tip="Brush size">
-            <span>Size</span>
-            <input type="range" id="drawSize" min="1" max="40" step="1" value="4">
-            <span class="draw-slider-value" id="drawSizeLabel">4</span>
-        </label>
-        <span class="fmt-sep"></span>
-        <label class="draw-slider" data-tip="Opacity">
-            <span>Opacity</span>
-            <input type="range" id="drawOpacity" min="10" max="100" step="5" value="100">
-            <span class="draw-slider-value" id="drawOpacityLabel">100%</span>
-        </label>
-        <span class="fmt-sep"></span>
-        <button class="fmt-btn" id="drawDone" data-tip="Exit draw mode">Done</button>
+        <button class="fmt-btn fmt-btn--del" id="strokeDelete" aria-label="Delete drawing" data-tip="Delete drawing (Del)">&#128465;</button>
     </div>
 
     <!-- Floating image toolbar -->
     <div id="imageToolbar" class="image-toolbar" style="display:none;">
-        <button class="fmt-btn" id="imgDownload" data-tip="Download image">
+        <button class="fmt-btn" id="imgRotate" aria-label="Rotate image 90°" data-tip="Rotate 90° (imported images)">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.13-9.36L23 10"/></svg>
+        </button>
+        <span class="fmt-sep"></span>
+        <button class="fmt-btn" id="imgDownload" aria-label="Download image" data-tip="Download image">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
         </button>
         <span class="fmt-sep"></span>
-        <button class="fmt-btn fmt-btn--del" id="imgDelete" data-tip="Delete image (Del)">&#128465;</button>
+        <button class="fmt-btn fmt-btn--del" id="imgDelete" aria-label="Delete image" data-tip="Delete image (Del)">&#128465;</button>
     </div>
 
     <!-- Floating text format toolbar -->
     <div id="formatToolbar" class="format-toolbar" style="display:none;">
-        <button class="fmt-btn" id="fmtBold" data-tip="Toggle bold"><b>B</b></button>
-        <button class="fmt-btn" id="fmtItalic" data-tip="Toggle italic"><i>I</i></button>
+        <select id="fmtFont" class="fmt-select" aria-label="Font family" data-tip="Font family">
+            <option value="">Original</option>
+            <option value="Helvetica">Helvetica</option>
+            <option value="Times">Times</option>
+            <option value="Courier">Courier</option>
+        </select>
         <span class="fmt-sep"></span>
-        <button class="fmt-btn fmt-btn--sm" id="fmtSizeDown" data-tip="Decrease font size">A-</button>
+        <button class="fmt-btn" id="fmtBold" aria-label="Toggle bold" data-tip="Toggle bold"><b>B</b></button>
+        <button class="fmt-btn" id="fmtItalic" aria-label="Toggle italic" data-tip="Toggle italic"><i>I</i></button>
+        <span class="fmt-sep"></span>
+        <button class="fmt-btn" id="fmtAlignLeft" aria-label="Align left" data-tip="Align left">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="14" y2="12"/><line x1="3" y1="18" x2="18" y2="18"/></svg>
+        </button>
+        <button class="fmt-btn" id="fmtAlignCenter" aria-label="Align center" data-tip="Align center">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="7" y1="12" x2="17" y2="12"/><line x1="5" y1="18" x2="19" y2="18"/></svg>
+        </button>
+        <button class="fmt-btn" id="fmtAlignRight" aria-label="Align right" data-tip="Align right">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="10" y1="12" x2="21" y2="12"/><line x1="6" y1="18" x2="21" y2="18"/></svg>
+        </button>
+        <span class="fmt-sep"></span>
+        <button class="fmt-btn fmt-btn--sm" id="fmtSizeDown" aria-label="Decrease font size" data-tip="Decrease font size">A-</button>
         <span class="fmt-size" id="fmtSizeLabel">12</span>
         <button class="fmt-btn fmt-btn--sm" id="fmtSizeUp" data-tip="Increase font size">A+</button>
         <span class="fmt-sep"></span>
-        <input type="color" id="fmtColor" class="fmt-color" data-tip="Change text color" value="#000000">
+        <input type="color" id="fmtColor" aria-label="Text color" class="fmt-color" data-tip="Change text color" value="#000000">
         <span class="fmt-sep"></span>
         <button class="fmt-btn fmt-btn--del" id="fmtDelete" data-tip="Delete text (Del)">&#128465;</button>
     </div>
 
-    <script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@pdf-lib/fontkit@1.1.1/dist/fontkit.umd.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
+    <!-- Vendored locally: keeps the "your PDF never leaves your device" promise
+         free of third-party requests, and works offline -->
+    <script src="vendor/pdf-lib.min.js"></script>
+    <script src="vendor/fontkit.umd.min.js"></script>
+    <script src="vendor/pdf.min.js"></script>
     <script type="module" src="js/app.js"></script>
 </body>
 </html>

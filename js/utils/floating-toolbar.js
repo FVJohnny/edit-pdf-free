@@ -60,12 +60,12 @@ export function createFloatingToolbar(toolbarEl, { shouldIgnoreTarget }) {
     }, true);
 
     // Prevent toolbar clicks from stealing focus/blur from editable elements
-    toolbarEl.addEventListener('mousedown', (e) => {
+    toolbarEl.addEventListener('pointerdown', (e) => {
         e.preventDefault();
     });
 
     // Dismiss when clicking outside both the toolbar and the active item
-    document.addEventListener('mousedown', (e) => {
+    document.addEventListener('pointerdown', (e) => {
         if (!activeItem) return;
         if (toolbarEl.contains(e.target)) return;
         if (shouldIgnoreTarget && shouldIgnoreTarget(e.target)) return;

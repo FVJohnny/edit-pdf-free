@@ -7,18 +7,21 @@
  * shifted proportionally with the scroll position (like a code-editor minimap)
  * so the strip always stays in view.
  */
+import { layoutWidth, layoutHeight } from './utils/canvas.js';
 
 let viewer = null;
 let minimapEl = null;
 let innerEl = null;
 let stripEl = null;
 let rebuildTimer = null;
+let callbacks = {}; // { onReorder(from, to), onDelete(index) }
 
-export function initMinimap(viewerEl, mapEl, contentEl, stripElement) {
+export function initMinimap(viewerEl, mapEl, contentEl, stripElement, cbs = {}) {
     viewer = viewerEl;
     minimapEl = mapEl;
     innerEl = contentEl;
     stripEl = stripElement;
+    callbacks = cbs;
 
     viewer.addEventListener('scroll', updateMinimapViewport);
     window.addEventListener('resize', updateMinimapViewport);
@@ -32,15 +35,16 @@ export function initMinimap(viewerEl, mapEl, contentEl, stripElement) {
         const frac = yInContent / contentH;
         viewer.scrollTop = frac * viewer.scrollHeight - viewer.clientHeight / 2;
     };
-    minimapEl.addEventListener('mousedown', (e) => {
+    minimapEl.addEventListener('pointerdown', (e) => {
         dragging = true;
         scrollToEvent(e);
         e.preventDefault();
     });
-    document.addEventListener('mousemove', (e) => {
+    document.addEventListener('pointermove', (e) => {
         if (dragging) scrollToEvent(e);
     });
-    document.addEventListener('mouseup', () => { dragging = false; });
+    document.addEventListener('pointerup', () => { dragging = false; });
+    document.addEventListener('pointercancel', () => { dragging = false; });
 }
 
 /** How far the minimap content is shifted up so the strip stays in view. */
@@ -94,10 +98,90 @@ export async function rebuildMinimap() {
         for (const cv of canvases) {
             ctx.drawImage(cv, 0, 0, thumb.width, thumb.height);
         }
-        await drawOverlaysOnThumb(ctx, container, thumb.width / base.width, thumb.height / base.height);
-        innerEl.appendChild(thumb);
+        // Overlay positions are in layout px — scale from layout, not backing
+        await drawOverlaysOnThumb(ctx, container, thumb.width / layoutWidth(base), thumb.height / layoutHeight(base));
+
+        // Wrap: drag handle (reorder) + delete button appear on hover
+        const wrap = document.createElement('div');
+        wrap.className = 'pdf-minimap-page';
+        wrap.appendChild(thumb);
+        const handle = document.createElement('button');
+        handle.className = 'minimap-handle';
+        handle.setAttribute('aria-label', 'Drag to reorder page');
+        handle.textContent = '⠿';
+        handle.addEventListener('pointerdown', (e) => startReorder(e, wrap));
+        const del = document.createElement('button');
+        del.className = 'minimap-delete';
+        del.setAttribute('aria-label', 'Delete page');
+        del.textContent = '✕';
+        del.addEventListener('pointerdown', (e) => e.stopPropagation());
+        del.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const idx = pageWraps().indexOf(wrap);
+            if (idx !== -1) callbacks.onDelete?.(idx);
+        });
+        const rotate = document.createElement('button');
+        rotate.className = 'minimap-rotate';
+        rotate.setAttribute('aria-label', 'Rotate page 90°');
+        rotate.textContent = '⟳';
+        rotate.addEventListener('pointerdown', (e) => e.stopPropagation());
+        rotate.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const idx = pageWraps().indexOf(wrap);
+            if (idx !== -1) callbacks.onRotate?.(idx);
+        });
+        wrap.append(handle, rotate, del);
+        innerEl.appendChild(wrap);
     }
     updateMinimapViewport();
+}
+
+function pageWraps() {
+    return [...innerEl.querySelectorAll(':scope > .pdf-minimap-page')];
+}
+
+/** Pointer-driven thumbnail reorder: drag the handle, drop between pages. */
+function startReorder(e, wrap) {
+    e.preventDefault();
+    e.stopPropagation();
+    const from = pageWraps().indexOf(wrap);
+    if (from === -1) return;
+    wrap.classList.add('dragging');
+    const marker = document.createElement('div');
+    marker.className = 'minimap-drop-marker';
+    innerEl.appendChild(marker);
+    let dropIdx = null;
+
+    const moveMarker = (clientY) => {
+        const wraps = pageWraps();
+        dropIdx = wraps.length;
+        for (let i = 0; i < wraps.length; i++) {
+            const r = wraps[i].getBoundingClientRect();
+            if (clientY < r.top + r.height / 2) { dropIdx = i; break; }
+        }
+        const innerRect = innerEl.getBoundingClientRect();
+        const y = dropIdx < wraps.length
+            ? wraps[dropIdx].getBoundingClientRect().top - innerRect.top - 3
+            : wraps[wraps.length - 1].getBoundingClientRect().bottom - innerRect.top + 1;
+        marker.style.top = y + 'px';
+    };
+    moveMarker(e.clientY);
+
+    const onMove = (ev) => moveMarker(ev.clientY);
+    const onUp = () => {
+        document.removeEventListener('pointermove', onMove);
+        document.removeEventListener('pointerup', onUp);
+        document.removeEventListener('pointercancel', onUp);
+        wrap.classList.remove('dragging');
+        marker.remove();
+        // Dropping right before or right after itself is a no-op
+        if (dropIdx != null && dropIdx !== from && dropIdx !== from + 1) {
+            callbacks.onReorder?.(from, dropIdx);
+        }
+    };
+    document.addEventListener('pointermove', onMove);
+    document.addEventListener('pointerup', onUp);
+    document.addEventListener('pointercancel', onUp);
 }
 
 /**
@@ -114,14 +198,20 @@ async function drawOverlaysOnThumb(ctx, container, sx, sy) {
             if (!d) continue;
             ctx.save();
             ctx.scale(sx, sy);
+            ctx.globalAlpha = parseFloat(path.getAttribute('opacity') ?? '1');
+            const p2d = new Path2D(d);
+            const fill = path.getAttribute('fill');
+            if (fill && fill !== 'none') {
+                ctx.fillStyle = fill;
+                ctx.fill(p2d);
+            }
             ctx.strokeStyle = path.getAttribute('stroke') || '#000';
             // Enforce a minimum on-thumbnail width so thin strokes stay visible
             const strokeWidth = parseFloat(path.getAttribute('stroke-width')) || 1;
             ctx.lineWidth = Math.max(strokeWidth, 2.5 / sx);
-            ctx.globalAlpha = parseFloat(path.getAttribute('opacity') ?? '1');
             ctx.lineCap = 'round';
             ctx.lineJoin = 'round';
-            ctx.stroke(new Path2D(d));
+            ctx.stroke(p2d);
             ctx.restore();
         }
     }

@@ -14,12 +14,27 @@ import { showFormatToolbar, repositionToolbar } from './toolbar.js';
 import { showImageToolbar, repositionImageToolbar, coverOriginalImage } from './image-toolbar.js';
 import { makeEditable } from './editor.js';
 import { sampleBgColor, sampleTextColor, sampleImageBgColor, rgbToCss } from './utils/color.js';
-import { coverOriginalText, captureCanvasRegion } from './utils/canvas.js';
+import { coverOriginalText, captureCanvasRegion, layoutWidth, layoutHeight } from './utils/canvas.js';
 import { DRAG_THRESHOLD, MIN_RESIZE_PX, MIN_IMAGE_SIZE, FONT_BASELINE_RATIO } from './utils/constants.js';
 import { recordAction } from './history.js';
+import { toggleMultiSelect, isMultiSelected, getMultiSelection, multiSelectionSize } from './selection.js';
 
 function clamp(value, min, max) {
     return Math.max(min, Math.min(max, value));
+}
+
+/**
+ * How to re-render each page container's canvas backing (for sharp zoom):
+ * container → { kind: 'pdf'|'merged', doc, pageNum } or { kind: 'blank' }.
+ */
+const pageRenderSources = new WeakMap();
+
+/** Set a canvas's layout size (CSS px) and backing resolution in one go. */
+function sizeCanvas(canvas, layoutW, layoutH, resolution = 1) {
+    canvas.width = Math.round(layoutW * resolution);
+    canvas.height = Math.round(layoutH * resolution);
+    canvas.style.width = layoutW + 'px';
+    canvas.style.height = layoutH + 'px';
 }
 
 // ============================================
@@ -45,8 +60,7 @@ export async function renderPDF(pdfDoc, pdfViewer, textItems, imageItems) {
 
         const canvas = document.createElement('canvas');
         canvas.getContext('2d', { willReadFrequently: true });
-        canvas.width = viewport.width;
-        canvas.height = viewport.height;
+        sizeCanvas(canvas, viewport.width, viewport.height);
         canvas.className = 'pdf-page';
 
         await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
@@ -59,7 +73,10 @@ export async function renderPDF(pdfDoc, pdfViewer, textItems, imageItems) {
         pageContainer.style.marginBottom = '20px';
         pageContainer.dataset.pdfWidth = String(unscaledViewport.width);
         pageContainer.dataset.pdfHeight = String(unscaledViewport.height);
+        // 0-based index into the ORIGINAL document — survives page reordering
+        pageContainer.dataset.originalPageIndex = String(pageNum - 1);
         pageContainer.appendChild(canvas);
+        pageRenderSources.set(pageContainer, { kind: 'pdf', doc: pdfDoc, pageNum });
 
         const textLayerDiv = createTextLayerDiv(viewport);
 
@@ -94,8 +111,7 @@ export async function renderMergedPage(pdfJsDoc, pageNum, availableWidth) {
     const viewport = page.getViewport({ scale });
 
     const canvas = document.createElement('canvas');
-    canvas.width = viewport.width;
-    canvas.height = viewport.height;
+    sizeCanvas(canvas, viewport.width, viewport.height);
     canvas.className = 'pdf-page';
     await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
 
@@ -106,6 +122,7 @@ export async function renderMergedPage(pdfJsDoc, pageNum, availableWidth) {
     container.dataset.pdfWidth = String(unscaledViewport.width);
     container.dataset.pdfHeight = String(unscaledViewport.height);
     container.appendChild(canvas);
+    pageRenderSources.set(container, { kind: 'merged', doc: pdfJsDoc, pageNum });
 
     const textLayer = document.createElement('div');
     textLayer.className = 'custom-text-layer';
@@ -132,13 +149,13 @@ export function createBlankPageContainer(width, height) {
     container.dataset.blankPage = 'true';
 
     const canvas = document.createElement('canvas');
-    canvas.width = width;
-    canvas.height = height;
+    sizeCanvas(canvas, width, height);
     canvas.className = 'pdf-page';
     const ctx = canvas.getContext('2d');
     ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, width, height);
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
     container.appendChild(canvas);
+    pageRenderSources.set(container, { kind: 'blank' });
 
     const textLayer = document.createElement('div');
     textLayer.className = 'custom-text-layer';
@@ -151,6 +168,66 @@ export function createBlankPageContainer(width, height) {
     container.appendChild(textLayer);
 
     return container;
+}
+
+// ============================================
+// Zoom re-render — sharp pages at any zoom level
+// ============================================
+
+let rerenderVersion = 0;
+const MAX_BACKING_RESOLUTION = 3;
+const MAX_BACKING_PIXELS = 12e6; // per page, keeps memory bounded
+
+/**
+ * Re-render every page's canvas backing at the given resolution (canvas px per
+ * layout px). Layout size — and every item coordinate — stays unchanged; only
+ * the backing store gets denser, so zoomed pages render sharp.
+ * Calls afterPage(container, canvas) after each page (used to replay covers).
+ * A newer call cancels the remaining work of an older one.
+ */
+export async function rerenderAllPages(pdfViewer, resolution, afterPage) {
+    const version = ++rerenderVersion;
+    const containers = pdfViewer.querySelectorAll(':scope > div');
+    for (const container of containers) {
+        if (version !== rerenderVersion) return;
+        const canvas = container.querySelector('canvas.pdf-page') || container.querySelector('canvas');
+        const source = pageRenderSources.get(container);
+        if (!canvas || !source) continue;
+
+        const layoutW = layoutWidth(canvas);
+        const layoutH = layoutHeight(canvas);
+        let res = clamp(resolution, 1, MAX_BACKING_RESOLUTION);
+        if (layoutW * layoutH * res * res > MAX_BACKING_PIXELS) {
+            res = Math.max(1, Math.sqrt(MAX_BACKING_PIXELS / (layoutW * layoutH)));
+        }
+        // Already at this resolution — skip
+        if (Math.abs(canvas.width - Math.round(layoutW * res)) <= 1) continue;
+
+        if (source.kind === 'blank') {
+            sizeCanvas(canvas, layoutW, layoutH, res);
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+        } else {
+            try {
+                const page = await source.doc.getPage(source.pageNum);
+                if (version !== rerenderVersion) return;
+                // Render to an offscreen canvas first so the visible page never flashes empty
+                const off = document.createElement('canvas');
+                const scale = (layoutW * res) / page.getViewport({ scale: 1 }).width;
+                const viewport = page.getViewport({ scale });
+                off.width = viewport.width;
+                off.height = viewport.height;
+                await page.render({ canvasContext: off.getContext('2d'), viewport }).promise;
+                if (version !== rerenderVersion) return;
+                sizeCanvas(canvas, layoutW, layoutH, res);
+                canvas.getContext('2d').drawImage(off, 0, 0, canvas.width, canvas.height);
+            } catch (_) {
+                continue; // e.g. destroyed doc — leave the current backing as is
+            }
+        }
+        if (afterPage) afterPage(container, canvas);
+    }
 }
 
 function createTextLayerDiv(viewport) {
@@ -618,6 +695,32 @@ function crossPageIfNeeded(element, item, e) {
 }
 
 /**
+ * Touch flow for text items: page scrolling must keep working over text (spans
+ * cover most of a page), so text spans don't block touch gestures by default.
+ * The first tap "arms" the item — its touch-action turns off and the toolbar
+ * shows — then it can be dragged with the finger; a second tap edits it.
+ */
+let touchArmedItem = null;
+
+function armForTouch(item) {
+    disarmTouch();
+    touchArmedItem = item;
+    item.element.classList.add('touch-armed');
+    item.element.style.touchAction = 'none';
+}
+
+function disarmTouch() {
+    if (!touchArmedItem) return;
+    touchArmedItem.element.classList.remove('touch-armed');
+    touchArmedItem.element.style.touchAction = '';
+    touchArmedItem = null;
+}
+
+document.addEventListener('pointerdown', (e) => {
+    if (touchArmedItem && !touchArmedItem.element.contains(e.target)) disarmTouch();
+});
+
+/**
  * Auto-scroll the viewer while a drag hovers near its top/bottom edge, so
  * items can be dragged to pages that aren't currently visible. Re-invokes the
  * drag's move handler with the last mouse event so the dragged element follows.
@@ -649,6 +752,62 @@ function applyDragPlacement(element, item, s) {
     item.moveOffsetY = s.offY;
 }
 
+/**
+ * Group-drag support. When the dragged item is part of a multi-selection, the
+ * other selected items follow with the same delta (clamped to their own page,
+ * no page-crossing for groups). Returns helpers used by both drag handlers.
+ */
+function makeGroupDrag(leadItem) {
+    const others = (isMultiSelected(leadItem) && multiSelectionSize() > 1)
+        ? getMultiSelection().filter(i => i !== leadItem)
+        : [];
+    const starts = others.map(item => ({
+        item,
+        left: parseFloat(item.element.style.left),
+        top: parseFloat(item.element.style.top),
+        offX: item.moveOffsetX,
+        offY: item.moveOffsetY,
+    }));
+
+    return {
+        active: others.length > 0,
+        onCoverStart() {
+            for (const s of starts) {
+                if (s.item.type) coverOriginalImage(s.item);
+                else coverOriginalText(s.item, s.item.lastCoverWidth || s.item.originalWidth);
+                s.item.element.classList.add('moved');
+                if (!s.item.type) s.item.element.classList.add('modified');
+            }
+        },
+        onMove(dx, dy) {
+            for (const s of starts) {
+                const c = s.item.canvas;
+                const el = s.item.element;
+                const w = parseFloat(el.style.width) || el.getBoundingClientRect().width;
+                const h = parseFloat(el.style.height) || el.getBoundingClientRect().height;
+                el.style.left = clamp(s.left + dx, 0, layoutWidth(c) - w) + 'px';
+                el.style.top = clamp(s.top + dy, 0, layoutHeight(c) - h) + 'px';
+            }
+        },
+        onDrop(recordEntries) {
+            for (const s of starts) {
+                s.item.moveOffsetX = parseFloat(s.item.element.style.left) - s.item.cssLeft;
+                s.item.moveOffsetY = parseFloat(s.item.element.style.top) - s.item.cssTop;
+                recordEntries.push({
+                    element: s.item.element,
+                    item: s.item,
+                    prev: { parent: s.item.element.parentElement, canvas: s.item.canvas, left: s.left, top: s.top, offX: s.offX, offY: s.offY },
+                    next: {
+                        parent: s.item.element.parentElement, canvas: s.item.canvas,
+                        left: parseFloat(s.item.element.style.left), top: parseFloat(s.item.element.style.top),
+                        offX: s.item.moveOffsetX, offY: s.item.moveOffsetY,
+                    },
+                });
+            }
+        },
+    };
+}
+
 /** Set up drag-to-move, click-to-select, and resize handles for an image overlay. */
 export function setupImageDrag(overlay, imageItemData, canvas) {
     let dragState = null;
@@ -659,7 +818,7 @@ export function setupImageDrag(overlay, imageItemData, canvas) {
     for (const edge of ['n', 's', 'e', 'w', 'nw', 'ne', 'sw', 'se']) {
         const handle = document.createElement('div');
         handle.className = `img-resize-handle img-resize-${edge}`;
-        handle.addEventListener('mousedown', (e) => {
+        handle.addEventListener('pointerdown', (e) => {
             e.preventDefault();
             e.stopPropagation();
             startResize(e, edge, overlay, imageItemData);
@@ -667,19 +826,26 @@ export function setupImageDrag(overlay, imageItemData, canvas) {
         overlay.appendChild(handle);
     }
 
-    overlay.addEventListener('mousedown', (e) => {
+    overlay.addEventListener('pointerdown', (e) => {
         if (e.target !== overlay) return;
         e.preventDefault();
         e.stopPropagation();
 
+        // Shift+click: toggle multi-selection instead of dragging
+        if (e.shiftKey) {
+            toggleMultiSelect(imageItemData);
+            return;
+        }
+
+        const group = makeGroupDrag(imageItemData);
         const imgW = parseFloat(overlay.style.width);
         const imgH = parseFloat(overlay.style.height);
 
-        // Grab offsets in canvas pixels so the overlay stays anchored under the
+        // Grab offsets in layout pixels so the overlay stays anchored under the
         // cursor while dragging, including across pages and under zoom.
         const startCanvas = imageItemData.canvas;
         const startCanvasRect = startCanvas.getBoundingClientRect();
-        const startPxScale = startCanvas.width / startCanvasRect.width;
+        const startPxScale = layoutWidth(startCanvas) / startCanvasRect.width;
         const overlayRect = overlay.getBoundingClientRect();
 
         dragState = {
@@ -707,19 +873,22 @@ export function setupImageDrag(overlay, imageItemData, canvas) {
                 dragState.hasMoved = true;
                 overlay.classList.add('dragging');
                 coverOriginalImage(imageItemData);
+                if (group.active) group.onCoverStart();
                 showImageToolbar(imageItemData);
             }
             if (!dragState.hasMoved) return;
 
-            const curCanvas = crossPageIfNeeded(overlay, imageItemData, e);
+            // Groups move together and stay on their own pages
+            const curCanvas = group.active ? imageItemData.canvas : crossPageIfNeeded(overlay, imageItemData, e);
 
             // Anchor the overlay under the cursor, clamped to the page canvas
             const rect = curCanvas.getBoundingClientRect();
-            const pxScale = curCanvas.width / rect.width;
-            const newLeft = clamp((e.clientX - rect.left) * pxScale - dragState.grabDx, 0, curCanvas.width - imgW);
-            const newTop = clamp((e.clientY - rect.top) * pxScale - dragState.grabDy, 0, curCanvas.height - imgH);
+            const pxScale = layoutWidth(curCanvas) / rect.width;
+            const newLeft = clamp((e.clientX - rect.left) * pxScale - dragState.grabDx, 0, layoutWidth(curCanvas) - imgW);
+            const newTop = clamp((e.clientY - rect.top) * pxScale - dragState.grabDy, 0, layoutHeight(curCanvas) - imgH);
             overlay.style.left = newLeft + 'px';
             overlay.style.top = newTop + 'px';
+            if (group.active) group.onMove(newLeft - dragState.origLeft, newTop - dragState.origTop);
             repositionImageToolbar(imageItemData);
         };
 
@@ -730,8 +899,9 @@ export function setupImageDrag(overlay, imageItemData, canvas) {
         );
 
         const onMouseUp = () => {
-            document.removeEventListener('mousemove', onMouseMove);
-            document.removeEventListener('mouseup', onMouseUp);
+            document.removeEventListener('pointermove', onMouseMove);
+            document.removeEventListener('pointerup', onMouseUp);
+            document.removeEventListener('pointercancel', onMouseUp);
             stopAutoScroll();
             if (!dragState) return;
 
@@ -744,27 +914,32 @@ export function setupImageDrag(overlay, imageItemData, canvas) {
                 imageItemData.moveOffsetX = parseFloat(overlay.style.left) - imageItemData.cssLeft;
                 imageItemData.moveOffsetY = parseFloat(overlay.style.top) - imageItemData.cssTop;
 
-                const prev = {
-                    parent: dragState.startParent, canvas: dragState.startCanvas,
-                    left: dragState.origLeft, top: dragState.origTop,
-                    offX: dragState.prevOffsetX, offY: dragState.prevOffsetY,
-                };
-                const next = {
-                    parent: overlay.parentElement, canvas: imageItemData.canvas,
-                    left: parseFloat(overlay.style.left), top: parseFloat(overlay.style.top),
-                    offX: imageItemData.moveOffsetX, offY: imageItemData.moveOffsetY,
-                };
+                const entries = [{
+                    element: overlay, item: imageItemData,
+                    prev: {
+                        parent: dragState.startParent, canvas: dragState.startCanvas,
+                        left: dragState.origLeft, top: dragState.origTop,
+                        offX: dragState.prevOffsetX, offY: dragState.prevOffsetY,
+                    },
+                    next: {
+                        parent: overlay.parentElement, canvas: imageItemData.canvas,
+                        left: parseFloat(overlay.style.left), top: parseFloat(overlay.style.top),
+                        offX: imageItemData.moveOffsetX, offY: imageItemData.moveOffsetY,
+                    },
+                }];
+                if (group.active) group.onDrop(entries);
                 recordAction({
-                    undo() { applyDragPlacement(overlay, imageItemData, prev); },
-                    redo() { applyDragPlacement(overlay, imageItemData, next); },
+                    undo() { for (const en of entries) applyDragPlacement(en.element, en.item, en.prev); },
+                    redo() { for (const en of entries) applyDragPlacement(en.element, en.item, en.next); },
                 });
             }
             showImageToolbar(imageItemData);
             dragState = null;
         };
 
-        document.addEventListener('mousemove', onMouseMove);
-        document.addEventListener('mouseup', onMouseUp);
+        document.addEventListener('pointermove', onMouseMove);
+        document.addEventListener('pointerup', onMouseUp);
+        document.addEventListener('pointercancel', onMouseUp);
     });
 }
 
@@ -782,13 +957,17 @@ function startResize(mouseDownEvent, edge, overlay, imageItemData) {
     const aspectRatio = origWidth / origHeight;
     let hasResized = false;
 
+    // Convert mouse deltas (css px) to layout px so resizing is accurate under zoom
+    const canvasEl = imageItemData.canvas;
+    const pxScale = layoutWidth(canvasEl) / canvasEl.getBoundingClientRect().width;
+
     const isEdgeOnly = edge.length === 1; // 'n', 's', 'e', or 'w'
     const isHorizontalEdge = edge === 'e' || edge === 'w';
     const isVerticalEdge = edge === 'n' || edge === 's';
 
     const onMouseMove = (e) => {
-        const dx = e.clientX - startX;
-        const dy = e.clientY - startY;
+        const dx = (e.clientX - startX) * pxScale;
+        const dy = (e.clientY - startY) * pxScale;
 
         if (!hasResized && Math.abs(dx) + Math.abs(dy) > DRAG_THRESHOLD) {
             hasResized = true;
@@ -842,8 +1021,9 @@ function startResize(mouseDownEvent, edge, overlay, imageItemData) {
     const prevMoveOffsetY = imageItemData.moveOffsetY;
 
     const onMouseUp = () => {
-        document.removeEventListener('mousemove', onMouseMove);
-        document.removeEventListener('mouseup', onMouseUp);
+        document.removeEventListener('pointermove', onMouseMove);
+        document.removeEventListener('pointerup', onMouseUp);
+            document.removeEventListener('pointercancel', onMouseUp);
         if (!hasResized) return;
 
         const newLeft = parseFloat(overlay.style.left);
@@ -884,8 +1064,9 @@ function startResize(mouseDownEvent, edge, overlay, imageItemData) {
         });
     };
 
-    document.addEventListener('mousemove', onMouseMove);
-    document.addEventListener('mouseup', onMouseUp);
+    document.addEventListener('pointermove', onMouseMove);
+    document.addEventListener('pointerup', onMouseUp);
+        document.addEventListener('pointercancel', onMouseUp);
 }
 
 // ============================================
@@ -898,15 +1079,30 @@ export function setupTextDrag(span, textItemData, canvas) {
 
     span.addEventListener('dragstart', (e) => e.preventDefault());
 
-    span.addEventListener('mousedown', (e) => {
-        if (textItemData.element.contentEditable === 'true') return;
+    span.addEventListener('pointerdown', (e) => {
+        if (textItemData.element.isContentEditable) return;
         e.preventDefault();
         e.stopPropagation();
 
+        // Shift+click: toggle multi-selection instead of dragging/editing
+        if (e.shiftKey) {
+            toggleMultiSelect(textItemData);
+            return;
+        }
+
+        // Touch: first tap arms the item (so the page can still scroll over
+        // text); once armed it can be finger-dragged, a second tap edits.
+        if (e.pointerType === 'touch' && touchArmedItem !== textItemData) {
+            armForTouch(textItemData);
+            showFormatToolbar(textItemData);
+            return;
+        }
+
+        const group = makeGroupDrag(textItemData);
         const spanRect = span.getBoundingClientRect();
         const startCanvas = textItemData.canvas;
         const startCanvasRect = startCanvas.getBoundingClientRect();
-        const startPxScale = startCanvas.width / startCanvasRect.width;
+        const startPxScale = layoutWidth(startCanvas) / startCanvasRect.width;
 
         dragState = {
             startX: e.clientX,
@@ -937,18 +1133,21 @@ export function setupTextDrag(span, textItemData, canvas) {
                 span.classList.add('dragging');
                 showFormatToolbar(textItemData);
                 coverOriginalText(textItemData, dragState.spanWidth);
+                if (group.active) group.onCoverStart();
             }
             if (!dragState.hasMoved) return;
 
-            const curCanvas = crossPageIfNeeded(span, textItemData, e);
+            // Groups move together and stay on their own pages
+            const curCanvas = group.active ? textItemData.canvas : crossPageIfNeeded(span, textItemData, e);
 
             // Anchor the span under the cursor, clamped to the page canvas
             const rect = curCanvas.getBoundingClientRect();
-            const pxScale = curCanvas.width / rect.width;
-            const newLeft = clamp((e.clientX - rect.left) * pxScale - dragState.grabDx, 0, curCanvas.width - dragState.spanWidth);
-            const newTop = clamp((e.clientY - rect.top) * pxScale - dragState.grabDy, 0, curCanvas.height - dragState.spanHeight);
+            const pxScale = layoutWidth(curCanvas) / rect.width;
+            const newLeft = clamp((e.clientX - rect.left) * pxScale - dragState.grabDx, 0, layoutWidth(curCanvas) - dragState.spanWidth);
+            const newTop = clamp((e.clientY - rect.top) * pxScale - dragState.grabDy, 0, layoutHeight(curCanvas) - dragState.spanHeight);
             span.style.left = newLeft + 'px';
             span.style.top = newTop + 'px';
+            if (group.active) group.onMove(newLeft - dragState.origLeft, newTop - dragState.origTop);
             repositionToolbar(textItemData);
         };
 
@@ -959,8 +1158,9 @@ export function setupTextDrag(span, textItemData, canvas) {
         );
 
         const onMouseUp = () => {
-            document.removeEventListener('mousemove', onMouseMove);
-            document.removeEventListener('mouseup', onMouseUp);
+            document.removeEventListener('pointermove', onMouseMove);
+            document.removeEventListener('pointerup', onMouseUp);
+            document.removeEventListener('pointercancel', onMouseUp);
             stopAutoScroll();
             if (!dragState) return;
 
@@ -974,19 +1174,23 @@ export function setupTextDrag(span, textItemData, canvas) {
                 textItemData.moveOffsetY = parseFloat(span.style.top) - textItemData.cssTop;
                 showFormatToolbar(textItemData);
 
-                const prev = {
-                    parent: dragState.startParent, canvas: dragState.startCanvas,
-                    left: dragState.origLeft, top: dragState.origTop,
-                    offX: dragState.prevOffsetX, offY: dragState.prevOffsetY,
-                };
-                const next = {
-                    parent: span.parentElement, canvas: textItemData.canvas,
-                    left: parseFloat(span.style.left), top: parseFloat(span.style.top),
-                    offX: textItemData.moveOffsetX, offY: textItemData.moveOffsetY,
-                };
+                const entries = [{
+                    element: span, item: textItemData,
+                    prev: {
+                        parent: dragState.startParent, canvas: dragState.startCanvas,
+                        left: dragState.origLeft, top: dragState.origTop,
+                        offX: dragState.prevOffsetX, offY: dragState.prevOffsetY,
+                    },
+                    next: {
+                        parent: span.parentElement, canvas: textItemData.canvas,
+                        left: parseFloat(span.style.left), top: parseFloat(span.style.top),
+                        offX: textItemData.moveOffsetX, offY: textItemData.moveOffsetY,
+                    },
+                }];
+                if (group.active) group.onDrop(entries);
                 recordAction({
-                    undo() { applyDragPlacement(span, textItemData, prev); },
-                    redo() { applyDragPlacement(span, textItemData, next); },
+                    undo() { for (const en of entries) applyDragPlacement(en.element, en.item, en.prev); },
+                    redo() { for (const en of entries) applyDragPlacement(en.element, en.item, en.next); },
                 });
             } else {
                 makeEditable(textItemData);
@@ -995,7 +1199,8 @@ export function setupTextDrag(span, textItemData, canvas) {
             dragState = null;
         };
 
-        document.addEventListener('mousemove', onMouseMove);
-        document.addEventListener('mouseup', onMouseUp);
+        document.addEventListener('pointermove', onMouseMove);
+        document.addEventListener('pointerup', onMouseUp);
+        document.addEventListener('pointercancel', onMouseUp);
     });
 }

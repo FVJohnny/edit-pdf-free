@@ -6,20 +6,27 @@ import { coverOriginalText } from './utils/canvas.js';
 // Make text editable inline
 // ============================================
 export function makeEditable(textItem) {
-    if (textItem.element.contentEditable === 'true') return;
+    const el = textItem.element;
+    if (el.isContentEditable) return;
 
-    document.querySelectorAll('.text-item').forEach(el => {
-        el.contentEditable = false;
-        el.classList.remove('editing');
+    // Close any other editor still open (normally blur handles this; this is
+    // a safety net e.g. when focus was lost without a blur event)
+    document.querySelectorAll('.editable-text[contenteditable]').forEach(other => {
+        if (other !== el && other.isContentEditable) other.blur();
     });
 
-    textItem.element.style.minWidth = textItem.originalWidth + 'px';
-    textItem.element.contentEditable = true;
-    textItem.element.classList.add('editing');
-    textItem.element.focus();
+    el.style.minWidth = textItem.originalWidth + 'px';
+    // Render \n as line breaks while editing (and after, for multi-line text)
+    el.style.whiteSpace = 'pre-wrap';
+    // plaintext-only makes Enter insert plain \n and strips pasted formatting;
+    // fall back to true where unsupported
+    el.contentEditable = 'plaintext-only';
+    if (!el.isContentEditable) el.contentEditable = 'true';
+    el.classList.add('editing');
+    el.focus();
 
     const range = document.createRange();
-    range.selectNodeContents(textItem.element);
+    range.selectNodeContents(el);
     const selection = window.getSelection();
     selection.removeAllRanges();
     selection.addRange(range);
@@ -28,23 +35,37 @@ export function makeEditable(textItem) {
 
     const textBefore = textItem.currentText;
 
-    const finishEditing = () => {
-        textItem.element.contentEditable = false;
-        textItem.element.classList.remove('editing');
-        const textAfter = textItem.element.textContent;
+    /** Read the edited text preserving line breaks (innerText keeps <br>/<div> breaks). */
+    const readText = () => el.innerText.replace(/\r/g, '').replace(/\n+$/, '');
+
+    let finished = false;
+    const finishEditing = (event) => {
+        if (finished) return; // runs via Enter/Escape AND blur — only once
+        finished = true;
+        el.removeEventListener('keydown', onKeyDown);
+        el.contentEditable = 'false';
+        el.classList.remove('editing');
+        const textAfter = readText();
+        // Normalize the DOM content back to plain text with \n
+        el.textContent = textAfter;
         textItem.currentText = textAfter;
         const isMoved = textItem.moveOffsetX !== 0 || textItem.moveOffsetY !== 0;
         const hasOverrides = textItem.fontWeightOverride || textItem.fontStyleOverride ||
-                             textItem.fontSizeOverride || textItem.textColorOverride;
+                             textItem.fontSizeOverride || textItem.textColorOverride ||
+                             textItem.fontFamilyOverride || textItem.alignOverride;
         if (textItem.currentText !== textItem.originalText || isMoved || hasOverrides) {
             coverOriginalText(textItem, textItem.originalWidth);
-            textItem.element.classList.add('modified');
-            textItem.element.style.minWidth = textItem.originalWidth + 'px';
+            el.classList.add('modified');
+            el.style.minWidth = textItem.originalWidth + 'px';
         } else {
-            textItem.element.classList.remove('modified');
-            textItem.element.style.minWidth = '';
+            el.classList.remove('modified');
+            el.style.minWidth = '';
         }
-        hideFormatToolbar();
+        // When focus moved INTO the toolbar (e.g. opening the font select),
+        // the user is formatting, not leaving — keep the toolbar open.
+        const toolbarEl = document.getElementById('formatToolbar');
+        const focusMovedIntoToolbar = event?.relatedTarget && toolbarEl.contains(event.relatedTarget);
+        if (!focusMovedIntoToolbar) hideFormatToolbar();
 
         // Record undo action if text actually changed
         if (textAfter !== textBefore) {
@@ -61,16 +82,27 @@ export function makeEditable(textItem) {
         }
     };
 
-    textItem.element.addEventListener('blur', finishEditing, { once: true });
-
-    textItem.element.addEventListener('keydown', (e) => {
+    // Enter confirms; Shift+Enter (or Cmd/Ctrl+Enter) inserts a line break.
+    const onKeyDown = (e) => {
         if (e.key === 'Enter') {
+            if (e.shiftKey || e.metaKey || e.ctrlKey) {
+                // plaintext-only inserts \n natively; otherwise insert a <br>
+                if (el.contentEditable !== 'plaintext-only') {
+                    e.preventDefault();
+                    document.execCommand('insertLineBreak');
+                }
+                return;
+            }
             e.preventDefault();
-            textItem.element.blur();
+            finishEditing();
+            el.blur();
+        } else if (e.key === 'Escape') {
+            el.textContent = textItem.currentText;
+            finishEditing();
+            el.blur();
         }
-        if (e.key === 'Escape') {
-            textItem.element.textContent = textItem.currentText;
-            textItem.element.blur();
-        }
-    }, { once: true });
+    };
+
+    el.addEventListener('blur', finishEditing, { once: true });
+    el.addEventListener('keydown', onKeyDown);
 }

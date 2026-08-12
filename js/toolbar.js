@@ -8,8 +8,19 @@ import { MIN_FONT_SIZE } from './utils/constants.js';
 import { recordAction } from './history.js';
 
 const formatToolbar = document.getElementById('formatToolbar');
+const fmtFont = document.getElementById('fmtFont');
 const fmtBold = document.getElementById('fmtBold');
 const fmtItalic = document.getElementById('fmtItalic');
+const fmtAlignLeft = document.getElementById('fmtAlignLeft');
+const fmtAlignCenter = document.getElementById('fmtAlignCenter');
+const fmtAlignRight = document.getElementById('fmtAlignRight');
+
+/** CSS stacks for the three embeddable standard font families. */
+const FAMILY_CSS = {
+    Helvetica: 'Helvetica, Arial, sans-serif',
+    Times: "'Times New Roman', Times, serif",
+    Courier: "'Courier New', Courier, monospace",
+};
 const fmtSizeDown = document.getElementById('fmtSizeDown');
 const fmtSizeUp = document.getElementById('fmtSizeUp');
 const fmtSizeLabel = document.getElementById('fmtSizeLabel');
@@ -49,6 +60,11 @@ function updateToolbarState(textItem) {
     fmtSizeLabel.textContent = currentSize(textItem);
     const color = currentColor(textItem);
     fmtColor.value = rgbToHex(color.r, color.g, color.b);
+    fmtFont.value = textItem.fontFamilyOverride || '';
+    const align = textItem.alignOverride || 'left';
+    fmtAlignLeft.classList.toggle('active', align === 'left');
+    fmtAlignCenter.classList.toggle('active', align === 'center');
+    fmtAlignRight.classList.toggle('active', align === 'right');
 }
 
 function applyFormat(textItem) {
@@ -60,6 +76,15 @@ function applyFormat(textItem) {
     if (textItem.textColorOverride) {
         el.style.setProperty('--text-color', rgbToCss(textItem.textColorOverride));
     }
+
+    if (textItem.fontFamilyOverride) {
+        el.style.fontFamily = FAMILY_CSS[textItem.fontFamilyOverride] || textItem.fontFamilyOverride;
+    } else {
+        el.style.fontFamily = textItem.fontFamily;
+    }
+
+    // Alignment needs a box wider than the text — min-width covers it
+    el.style.textAlign = textItem.alignOverride || '';
 
     // Cover original canvas text so it doesn't show through the styled overlay
     coverOriginalText(textItem, textItem.originalWidth);
@@ -106,9 +131,28 @@ fmtSizeUp.addEventListener('click', () => {
     applyWithUndo(item, 'fontSizeOverride', currentSize(item) + 1);
 });
 
+fmtFont.addEventListener('change', () => {
+    const item = toolbar.getActiveItem();
+    if (!item) return;
+    applyWithUndo(item, 'fontFamilyOverride', fmtFont.value || undefined);
+});
+// The native select steals focus — keep the toolbar's active item alive
+fmtFont.addEventListener('pointerdown', (e) => e.stopPropagation());
+
+for (const [btn, align] of [[fmtAlignLeft, 'left'], [fmtAlignCenter, 'center'], [fmtAlignRight, 'right']]) {
+    btn.addEventListener('click', () => {
+        const item = toolbar.getActiveItem();
+        if (!item) return;
+        applyWithUndo(item, 'alignOverride', align === 'left' ? undefined : align);
+    });
+}
+
 fmtDelete.addEventListener('click', () => {
     const item = toolbar.getActiveItem();
     if (!item) return;
+    // Remember state so undo restores exactly what was there before
+    const wasModified = item.element.classList.contains('modified');
+    const wasMoved = item.element.classList.contains('moved');
     coverOriginalText(item, item.originalWidth);
     item.deleted = true;
     item.element.classList.add('deleted');
@@ -121,7 +165,10 @@ fmtDelete.addEventListener('click', () => {
         undo() {
             item.deleted = false;
             item.element.classList.remove('deleted');
-            item.element.classList.add('modified');
+            // The canvas original was covered on delete, so an unmodified item
+            // still needs its overlay text visible — keep 'modified' in that case.
+            item.element.classList.toggle('modified', wasModified || item.originalCovered);
+            item.element.classList.toggle('moved', wasMoved);
             item.element.style.display = '';
         },
         redo() {

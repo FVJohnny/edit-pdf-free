@@ -131,6 +131,30 @@ Use the MCP Chrome tools (`mcp__chrome__*`) to test features in the browser. Lau
    - **Unmodified content** — Text and images that were NOT edited should be completely unchanged — no artifacts, no cover rects, no font substitution.
    - **Inserted blank pages** — Pages added before/after appear in the saved PDF in the correct order with the right dimensions, and any content placed on them is preserved.
 
+6h. **Multi-line text** — While editing, Shift+Enter (or Cmd/Ctrl+Enter) inserts a line break; plain Enter confirms. Saved PDF keeps the lines.
+
+6i. **Find** — Ctrl+F (or the magnifier button) opens the search bar; matches highlight, Enter/Shift+Enter cycle, the active match scrolls into view.
+
+6j. **Sign** — The Sign button opens a draw-your-signature modal; placing it creates a transparent-PNG image item (drag/resize/delete like any image) that saves correctly.
+
+6k. **Page management from the minimap** — Hovering a thumbnail shows: drag handle (⠿) to reorder, ⟳ to rotate the page 90° (bakes pending edits and reloads), ✕ to delete. Saved PDF matches the on-screen order exactly. Reorder and delete are undoable.
+
+6l. **Rotate imported image** — Select an imported image; the rotate button in its toolbar turns it 90° (undoable).
+
+6m. **Delete Page button** — The toolbar's Delete Page (trash) button removes the page currently in view and everything on it, with undo. Deleting the only remaining page is refused with a toast.
+
+6n. **Multi-select** — Shift+click several texts/images (blue dashed outline); dragging one moves the group (stays on their pages); Delete removes all; both undoable in one step.
+
+6o. **Font & alignment** — The text toolbar has a family select (Original/Helvetica/Times/Courier) and left/center/right alignment; both reflected in the saved PDF (multi-line alignment offsets each line).
+
+6p. **Annotations** — The draw palette has pen / highlighter / rectangle / arrow tools. Highlighter is wide and translucent. All save as vector paths and show in the minimap.
+
+6q. **Autosave** — After editing, reload the page: the upload zone offers "Recover last session"; it restores the document with edits baked in.
+
+6r. **Password PDFs** — Opening an encrypted PDF prompts for the password (retries on a wrong one).
+
+6s. **Sharp zoom** — Zoom to 200%: after a moment the page re-renders sharp (no CSS blur), covers stay covered, drag/resize remain accurate.
+
 ### Quick smoke test
 
 At minimum, for small changes: edit one text, drag another text, drag an image, change the color of a third text, save the PDF, reload it, and verify nothing is broken.

@@ -126,6 +126,54 @@
     font-weight: 500;
 }
 
+/* Signature modal */
+.modal--signature {
+    max-width: 640px;
+}
+
+.signature-canvas {
+    display: block;
+    width: 100%;
+    background:
+        linear-gradient(transparent calc(100% - 2px), rgba(255, 255, 255, 0.18) calc(100% - 2px)) no-repeat 0 72% / 100% 1px,
+        rgba(255, 255, 255, 0.04);
+    border: 1px dashed var(--border);
+    border-radius: var(--radius);
+    cursor: crosshair;
+    touch-action: none;
+    margin-bottom: 12px;
+}
+
+.signature-controls {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+}
+
+.signature-colors {
+    display: flex;
+    gap: 8px;
+}
+
+.signature-swatch {
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    border: 2px solid transparent;
+    cursor: pointer;
+    transition: border-color var(--transition);
+}
+
+.signature-swatch.active {
+    border-color: var(--accent);
+}
+
+.modal-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
 .modal-choices {
     display: flex;
     flex-direction: column;
@@ -311,14 +359,13 @@
         align-items: flex-start;
     }
 
+    /* Keep the toolbar on one row: the filename truncates with ellipsis */
     .toolbar {
-        flex-direction: column;
-        gap: 10px;
-        align-items: stretch;
+        gap: 8px;
     }
 
-    .toolbar-left,
-    .toolbar-right {
-        justify-content: space-between;
+    .toolbar-btn {
+        padding: 8px 10px;
+        font-size: 0.8rem;
     }
 }
