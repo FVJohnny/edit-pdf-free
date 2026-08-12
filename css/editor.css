@@ -693,8 +693,30 @@ body.drag-over-page::after {
     transition: opacity 0.15s;
 }
 
-.draggable-image:hover .img-resize-handle {
+/* Visible on hover (desktop) AND while selected (essential on touch — there
+   is no hover on mobile, so a tapped/selected image must show its handles) */
+.draggable-image:hover .img-resize-handle,
+.draggable-image.selected .img-resize-handle {
     opacity: 1;
+}
+
+/* Touch devices: much bigger grab targets */
+@media (hover: none), (pointer: coarse) {
+    .img-resize-nw, .img-resize-ne, .img-resize-sw, .img-resize-se {
+        width: 22px;
+        height: 22px;
+        border-radius: 50%;
+        border: 2px solid #fff;
+    }
+    .img-resize-nw { top: -11px; left: -11px; }
+    .img-resize-se { bottom: -11px; right: -11px; }
+    .img-resize-ne { top: -11px; right: -11px; }
+    .img-resize-sw { bottom: -11px; left: -11px; }
+
+    .shape-handle {
+        width: 22px;
+        height: 22px;
+    }
 }
 
 .img-resize-n, .img-resize-s {

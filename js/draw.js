@@ -29,6 +29,19 @@ const settings = {
 let drawMode = false;
 let pdfViewerEl = null;
 let strokesArray = null; // shared with app.js
+let onStrokeComplete = null; // app hook, called after a stroke/shape is finished
+
+export function setOnStrokeComplete(cb) {
+    onStrokeComplete = cb;
+}
+
+export function getSelectedStroke() {
+    return selectedStroke;
+}
+
+export function deleteSelectedStroke() {
+    if (selectedStroke) deleteStroke(selectedStroke);
+}
 
 /**
  * Initialise draw module with the viewer and the strokes-list reference.
@@ -180,6 +193,7 @@ function beginStroke(mouseDownEvent, svg, pageContainer, canvas) {
         makeStrokeInteractive(stroke);
         // Select the fresh stroke right away so it can be tweaked immediately
         selectStroke(stroke);
+        onStrokeComplete?.(stroke);
 
         recordAction({
             undo() {

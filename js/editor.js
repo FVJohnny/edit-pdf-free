@@ -40,9 +40,10 @@ export function makeEditable(textItem) {
 
     let finished = false;
     const finishEditing = (event) => {
-        if (finished) return; // runs via Enter/Escape AND blur — only once
+        if (finished) return; // runs via Enter/Escape, blur AND outside-pointer — only once
         finished = true;
         el.removeEventListener('keydown', onKeyDown);
+        document.removeEventListener('pointerdown', onOutsidePointer, true);
         el.contentEditable = 'false';
         el.classList.remove('editing');
         const textAfter = readText();
@@ -103,6 +104,18 @@ export function makeEditable(textItem) {
         }
     };
 
+    // Drag handlers on shapes/images preventDefault their pointerdown, which
+    // stops the browser from moving focus — so blur alone can't be trusted to
+    // commit the edit. A capture-phase outside-pointer listener covers it.
+    const onOutsidePointer = (e) => {
+        if (el.contains(e.target)) return;
+        const toolbarEl = document.getElementById('formatToolbar');
+        if (toolbarEl.contains(e.target)) return;
+        finishEditing(e);
+        el.blur();
+    };
+
     el.addEventListener('blur', finishEditing, { once: true });
     el.addEventListener('keydown', onKeyDown);
+    document.addEventListener('pointerdown', onOutsidePointer, true);
 }

@@ -90,3 +90,5 @@ A floating toolbar that appears when clicking on an image (similar to text forma
 - [x] **Shapes como herramienta propia** — separada de Draw; rect, círculo, flecha y estrella
 - [x] **Formas editables** — selección con recuadro punteado + tiradores de redimensionado (esquinas / extremos de flecha), mover arrastrando, color de línea, relleno o transparente, papelera; toolbar flotante que sigue a la figura; auto-selección al crearla
 - [x] **Barra agrupada** — herramientas en grupos visuales (historial / contenido / páginas / vista) que envuelven como bloques en pantallas estrechas
+- [x] **Lógica de herramientas coherente** — herramientas de contenido mutuamente excluyentes (Sign/Import/Merge sueltan Draw/Shapes); Escape suelta cualquier modo; Supr borra la forma seleccionada; texto se confirma al clicar fuera (antes quedaba en edición si clicabas una forma/imagen)
+- [x] **Firma/imágenes usables en táctil** — tiradores visibles al seleccionar (no solo hover) y targets de 22px en pantallas táctiles; imagen única importada queda auto-seleccionada

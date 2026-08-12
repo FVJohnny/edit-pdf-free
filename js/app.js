@@ -5,8 +5,8 @@ import { makeEditable } from './editor.js';
 import { savePDF, buildPdfBytes } from './saver.js';
 import { undo, redo, onHistoryChange, clearHistory, recordAction } from './history.js';
 import { getActiveTextItem, hideFormatToolbar } from './toolbar.js';
-import { hideImageToolbar } from './image-toolbar.js';
-import { initDraw, setDrawMode, isDrawMode, setDrawSettings, refreshDrawOverlays } from './draw.js';
+import { hideImageToolbar, showImageToolbar } from './image-toolbar.js';
+import { initDraw, setDrawMode, isDrawMode, setDrawSettings, refreshDrawOverlays, setOnStrokeComplete, getSelectedStroke, deleteSelectedStroke } from './draw.js';
 import { initMinimap, rebuildMinimap, scheduleMinimapRebuild } from './minimap.js';
 import { initSignature } from './signature.js';
 import { saveSession, loadSession, timeAgo } from './autosave.js';
@@ -172,6 +172,14 @@ document.addEventListener('keydown', (e) => {
         redo();
     }
 
+    // Escape: exit any active tool mode (draw, shapes, add-text)
+    if (e.key === 'Escape') {
+        const activeEl = document.activeElement;
+        if (!activeEl || (!activeEl.isContentEditable && activeEl.tagName !== 'INPUT' && activeEl.tagName !== 'TEXTAREA')) {
+            deactivateModes();
+        }
+    }
+
     // Delete/Backspace: delete selected text or image (only when not editing text)
     if (e.key === 'Delete' || e.key === 'Backspace') {
         // Don't interfere with text editing
@@ -182,6 +190,13 @@ document.addEventListener('keydown', (e) => {
         if (multiSelectionSize() > 0) {
             e.preventDefault();
             deleteMultiSelection();
+            return;
+        }
+
+        // Selected drawn stroke/shape
+        if (getSelectedStroke()) {
+            e.preventDefault();
+            deleteSelectedStroke();
             return;
         }
 
@@ -559,9 +574,13 @@ async function importImages(files, dropTarget = null) {
 
     // Import sequentially, cascading each image down-right so they don't stack
     let importedBytes = 0;
+    const items = [];
     for (let i = 0; i < files.length; i++) {
         const item = await importImage(files[i], i * 28, compression, dropTarget);
-        if (item) importedBytes += item.importedImageBytes.length;
+        if (item) {
+            items.push(item);
+            importedBytes += item.importedImageBytes.length;
+        }
     }
     const sizeNote = compression
         ? ` (${formatBytes(totalSize)} → ${formatBytes(importedBytes)})`
@@ -569,6 +588,9 @@ async function importImages(files, dropTarget = null) {
     showToast((files.length === 1
         ? 'Image imported — drag to position, resize as needed'
         : `${files.length} images imported — drag to position them`) + sizeNote);
+    // A single imported image gets selected right away — handles + toolbar ready
+    if (items.length === 1) showImageToolbar(items[0]);
+    return items;
 }
 
 async function importImage(file, cascadeOffset = 0, compression = null, dropTarget = null) {
@@ -1085,6 +1107,27 @@ shapesBtn.addEventListener('click', () => {
     toggleDrawMode(undefined, 'shapes');
 });
 drawDoneBtn.addEventListener('click', () => toggleDrawMode(false));
+
+/** Exit every tool mode — the app returns to plain select/edit behavior. */
+function deactivateModes() {
+    if (addTextMode) setAddTextMode(false);
+    if (isDrawMode()) toggleDrawMode(false);
+}
+
+// Content tools are mutually exclusive: picking one drops the others, so a
+// freshly placed element is always immediately selectable/resizable.
+document.getElementById('signBtn').addEventListener('click', deactivateModes);
+importImageBtn.addEventListener('click', deactivateModes);
+mergePdfBtn.addEventListener('click', deactivateModes);
+
+// Shapes behave like design apps: after placing one shape the tool releases,
+// leaving the shape selected with its handles ready. Pen/highlighter keep the
+// mode active (people draw several strokes in a row).
+setOnStrokeComplete((stroke) => {
+    if (stroke.shape !== 'pen' && stroke.shape !== 'highlighter') {
+        toggleDrawMode(false);
+    }
+});
 drawColor.addEventListener('input', syncDrawSettingsFromUI);
 drawSize.addEventListener('input', syncDrawSettingsFromUI);
 drawOpacity.addEventListener('input', syncDrawSettingsFromUI);
