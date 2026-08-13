@@ -5,10 +5,11 @@ export default defineConfig({
     testDir: 'tests/e2e',
     fullyParallel: true,
     forbidOnly: !!process.env.CI,
-    // One retry: the suite gates pushes, and heavy parallel runs can starve
-    // the browser enough to trip timing-sensitive interactions.
-    retries: process.env.CI ? 2 : 1,
-    workers: process.env.CI ? 2 : 4,
+    // The suite gates pushes: prioritize stability over speed. Higher worker
+    // counts starve the browser on a busy machine and trip timing-sensitive
+    // interactions at random.
+    retries: 2,
+    workers: 2,
     reporter: [['list']],
     timeout: 30_000,
     use: {
