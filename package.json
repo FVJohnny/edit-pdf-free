@@ -4,12 +4,15 @@
   "description": "A simple PDF text editor",
   "main": "index.html",
   "scripts": {
-    "start": "npx serve ."
+    "start": "npx serve .",
+    "test": "playwright test",
+    "test:headed": "playwright test --headed"
   },
   "dependencies": {
     "pdf-lib": "^1.17.1"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
     "serve": "^14.2.0"
   }
 }

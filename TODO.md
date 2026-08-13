@@ -92,3 +92,45 @@ A floating toolbar that appears when clicking on an image (similar to text forma
 - [x] **Barra agrupada** — herramientas en grupos visuales (historial / contenido / páginas / vista) que envuelven como bloques en pantallas estrechas
 - [x] **Lógica de herramientas coherente** — herramientas de contenido mutuamente excluyentes (Sign/Import/Merge sueltan Draw/Shapes); Escape suelta cualquier modo; Supr borra la forma seleccionada; texto se confirma al clicar fuera (antes quedaba en edición si clicabas una forma/imagen)
 - [x] **Firma/imágenes usables en táctil** — tiradores visibles al seleccionar (no solo hover) y targets de 22px en pantallas táctiles; imagen única importada queda auto-seleccionada
+
+## Sesión 2026-08-13 (tarde) — bugs de dibujo/formas en móvil
+
+- [x] **Scroll al dibujar en iOS** — iOS Safari ignora `touch-action: none` en elementos SVG; ahora el overlay de dibujo (y los trazos/recuadro de selección) hacen `preventDefault()` del `touchstart`, así que dibujar con el dedo ya no desplaza la página
+- [x] **Selección punteada no seguía a la figura al moverla** — los tiradores/recuadro se desplazan en vivo durante el drag y se reposicionan al soltar, deshacer y rehacer
+- [x] **Selección desalineada respecto a la figura** — el canvas de página era inline con margen propio, inflando el contenedor ~25px; el overlay SVG se estiraba y los trazos se pintaban más abajo que sus coordenadas. Canvas ahora `display:block` sin margen (el espaciado lo pone el contenedor)
+- [x] **Mover una forma exigía acertar en el trazo** — el recuadro punteado de selección ahora es superficie de arrastre: se puede mover la forma desde cualquier punto interior (las esquinas siguen redimensionando)
+- [x] **Borrar una forma dejaba la selección huérfana** — borrar, deshacer un trazo recién dibujado y cargar un documento nuevo limpian tiradores + toolbar flotante
+- [x] **Add Text en móvil no mostraba la toolbar** — el handler de colocación era async (await getPage); en iOS el focus() tras un await queda fuera del gesto y Safari lo revoca con blur, cerrando la toolbar al instante. Ahora es síncrono (lee dataset.pdfWidth) y las toolbars flotantes siguen al visualViewport (teclado móvil)
+- [x] **Toolbar del lápiz mostraba dos colores** — el relleno solo aplica a formas cerradas; para lápiz/subrayador/flecha se oculta el selector de relleno
+- [x] **Trazos libres sin recuadro de selección** — ahora muestran el mismo recuadro punteado que las formas (sin tiradores de resize) y se pueden arrastrar desde dentro
+- [x] **Selección nativa azul del canvas en móvil** — user-select none en el visor (el texto en edición sigue siendo seleccionable)
+- [x] **Firma invisible (negro sobre negro)** — el lienzo del modal de firma ahora tiene fondo blanco por CSS; el bitmap sigue transparente, así que el PNG exportado no cambia
+- [x] **Toolbar de texto desaparecía con el teclado (iOS)** — las toolbars flotantes ahora se clampan a la banda visible del visualViewport (entre barra de URL y teclado); antes quedaban recortadas fuera de pantalla al abrirse el teclado
+- [x] **Selector de color no abría en móvil** — el preventDefault de pointerdown de las toolbars flotantes ya no se aplica a inputs/selects (en iOS bloqueaba el foco nativo que abre el picker)
+- [x] **Grosor y opacidad en la toolbar de trazos/figuras** — dos sliders compactos con preview en vivo y un solo paso de undo por gesto (también con teclado)
+- [x] **Colocar firma no deseleccionaba el trazo activo** — selecciones exclusivas en ambos sentidos (imagen⇄trazo); el contorno de imagen seleccionada ahora es punteado como el resto
+- [x] **Toolbar de texto pegada al texto con teclado abierto** — el posicionado ahora es auto-corrector: coloca, mide dónde aterrizó de verdad (los navegadores móviles anclan fixed de forma distinta con teclado) y compensa la diferencia
+- [x] **Selección huérfana al tocar zona vacía** — el cierre automático de las toolbars flotantes ahora dispara onHide con limpieza del contorno/tiradores (imagen y trazo); ya no pueden quedar dos cosas seleccionadas
+- [x] **Opacidad dentro de la paleta de color** — con `<input type=color alpha>` (Chrome 133+/Safari modernos) la opacidad va en el propio selector nativo y desaparecen los sliders sueltos (paleta de dibujo y toolbar de trazo); fallback automático a sliders donde no hay soporte
+- [x] **Selector de color propio** — popover custom (cuadro S/V + tono + opacidad + 12 swatches) que reemplaza los input color nativos en paleta de dibujo, toolbar de trazos (línea y relleno) y color de texto; mismo UI en PC y móvil, sin el panel del sistema iOS (adiós al "+")
+- [x] **Opacidad solo dentro de la paleta de colores** — fuera los sliders sueltos de opacidad (paleta y toolbar de trazos) y fuera el botón de relleno transparente (relleno al 0% = sin relleno); el relleno tiene ahora su propia opacidad, compuesta con la del trazo al guardar
+- [x] **Opacidad en el color del texto** — de punta a punta: en pantalla (rgba) y en el PDF guardado (drawText opacity, forzando la fuente de respaldo porque el stream de fuente original no soporta transparencia); undo restaura el color base
+- [x] **Cancel del modal de firma no cerraba** — el botón Clear compartía la clase modal-btn--cancel y capturaba el listener; selector ahora scoped a .modal-actions
+- [x] **Colores negros en el PDF guardado** — causa: el input nativo con alpha de iOS devolvía el color en formato no-hex que la pantalla aceptaba pero hexToRgb del saver no; con el selector propio el formato siempre es hex. Verificado ciclo dibujar→guardar→recargar: lápiz rojo, subrayador translúcido, relleno azul 50%, texto naranja 60% — todo correcto
+- [x] **Swatch de color invisible en las toolbars** — la regla de tooltips ([data-tip]::after con opacity 0) pisaba la capa de color de los botones swatch, que también usaba ::after; movida a ::before
+- [x] **Slider de opacidad degradaba a blanco** — ahora el degradado va de transparente al color seleccionado y se regenera al cambiar el tono
+- [x] **Popover de color se cierra al tocar fuera** — el listener de cierre pasa a fase de captura (los elementos del editor cortan la propagación y lo dejaban abierto)
+- [x] **Redimensionar formas en móvil (estrella)** — los tiradores tienen ahora un área táctil invisible ampliada (~44px en táctil); antes a 8px del centro el toque caía en la superficie de arrastre y movía la forma
+- [x] **Error al guardar con firma** — no reproducible con documentos nuevos; causa probable: trazo con color en formato legado (input nativo+alpha de iOS) que abortaba todo el guardado. Blindado: color ilegible cae a negro en vez de romper el guardado, y el toast de error ahora muestra el mensaje real
+- [x] **Error al guardar con firma — RESUELTO de verdad** — el toast con mensaje real lo destapó: `crypto.subtle` no existe en contextos no seguros (HTTP por IP de LAN; en HTTPS/localhost sí) y el hash de dedupe de imágenes rompía el guardado. Fallback a hash FNV-1a sin crypto.subtle
+- [x] **Popover de color enterrado bajo el teclado** — ahora se reposiciona al abrir/cerrar el teclado o hacer scroll (antes solo se colocaba al abrirse)
+- [x] **Swatches del popover restablecen opacidad al 100%**
+- [x] **Seleccionar trazos sin puntería** — halo de 22px alrededor de cada trazo (hit-test geométrico con isPointInStroke sobre toques de fondo); las formas rellenas también se seleccionan tocando su interior
+- [x] **Lienzo de firma desbordaba el modal en móvil** — ancho fluido con aspect-ratio fijo (el ancho inline de 560px pisaba el width:100% del CSS)
+
+## Sesión 2026-08-13 (noche) — suite e2e Playwright
+
+- [x] **Suite e2e completa** — 62 tests en `tests/e2e/`: carga (fixture multipágina, PDF en blanco, cifrado con contraseña), texto (edición, formato, color+opacidad, multilínea, drag, multiselección, guardado), dibujo (pen/subrayador/4 formas, popover color/relleno, grosor, halo, handles, undo/redo, guardado con colores), imágenes (import, EXIF, drag/resize/rotate/delete, guardado), firma (modal, cancel/clear, transparencia, guardado), páginas (añadir/borrar/merge/zoom/minimap/buscar), flujo combinado completo, y proyecto táctil (no-scroll al dibujar, halo táctil)
+- [x] **regressions.spec.js** — un test por cada bug de las sesiones de hoy; REGLA PERMANENTE: todo bug nuevo se confirma con un test e2e antes de dar el fix por cerrado
+- [x] **Push bloqueado sin tests** — hook pre-push versionado en .githooks/ (activado con `git config core.hooksPath .githooks`) que ejecuta la suite completa
+- [x] **README actualizado** — lista completa de funcionalidades + sección de testing; enlace de GitHub → FVJohnny/edit-pdf-free

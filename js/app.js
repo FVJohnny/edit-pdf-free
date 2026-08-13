@@ -1,12 +1,14 @@
 import { initDragDrop, showToast, showChoices, showPrompt } from './ui.js';
 import { renderPDF, setupImageDrag, setupTextDrag, createBlankPageContainer, renderMergedPage, rerenderAllPages } from './renderer.js';
 import { coverOriginalText, coverOriginalImage, layoutWidth, layoutHeight } from './utils/canvas.js';
+import { combineHexAlpha } from './utils/color.js';
+import { openColorPopover } from './utils/color-popover.js';
 import { makeEditable } from './editor.js';
 import { savePDF, buildPdfBytes } from './saver.js';
 import { undo, redo, onHistoryChange, clearHistory, recordAction } from './history.js';
 import { getActiveTextItem, hideFormatToolbar } from './toolbar.js';
 import { hideImageToolbar, showImageToolbar } from './image-toolbar.js';
-import { initDraw, setDrawMode, isDrawMode, setDrawSettings, refreshDrawOverlays, setOnStrokeComplete, getSelectedStroke, deleteSelectedStroke } from './draw.js';
+import { initDraw, setDrawMode, isDrawMode, setDrawSettings, refreshDrawOverlays, setOnStrokeComplete, getSelectedStroke, deleteSelectedStroke, clearStrokeSelection } from './draw.js';
 import { initMinimap, rebuildMinimap, scheduleMinimapRebuild } from './minimap.js';
 import { initSignature } from './signature.js';
 import { saveSession, loadSession, timeAgo } from './autosave.js';
@@ -53,8 +55,6 @@ const drawPalette = document.getElementById('drawPalette');
 const drawColor = document.getElementById('drawColor');
 const drawSize = document.getElementById('drawSize');
 const drawSizeLabel = document.getElementById('drawSizeLabel');
-const drawOpacity = document.getElementById('drawOpacity');
-const drawOpacityLabel = document.getElementById('drawOpacityLabel');
 const drawDoneBtn = document.getElementById('drawDone');
 
 // ============================================
@@ -381,6 +381,7 @@ async function loadPDF(file) {
         clearHistory();
         hideFormatToolbar();
         hideImageToolbar();
+        clearStrokeSelection();
         addedPages.length = 0;
         mergedPages.length = 0;
         drawnStrokes.length = 0;
@@ -420,7 +421,11 @@ addTextBtn.addEventListener('click', () => {
     if (next) showToast('Click on the PDF to place new text');
 });
 
-pdfViewer.addEventListener('click', async (e) => {
+// NOTE: must stay synchronous — makeEditable() focuses the new text, and on
+// iOS a focus() that runs after an await is no longer inside the user
+// gesture: Safari revokes it with an immediate blur, which closes the editor
+// toolbar before the user ever sees it.
+pdfViewer.addEventListener('click', (e) => {
     if (!addTextMode) return;
 
     // Find which page container was clicked
@@ -450,25 +455,9 @@ pdfViewer.addEventListener('click', async (e) => {
     const canvasY = cssTop * scale;
 
     const defaultFontSize = 16;
-    // PDF-to-canvas scale: derive from the page's PDF width when available,
-    // falling back to letter-width (612pt) for legacy paths.
-    let pdfWidthPts = 612;
-    if (targetPage.dataset.blankPage === 'true') {
-        pdfWidthPts = parseFloat(targetPage.dataset.pdfWidth) || 612;
-    } else if (pdfDoc) {
-        try {
-            // Map DOM index → original PDF page number by counting non-blank containers up to target.
-            const containers = Array.from(pdfViewer.querySelectorAll(':scope > div'));
-            let originalIdx = -1;
-            for (let i = 0; i <= containers.indexOf(targetPage); i++) {
-                if (containers[i].dataset.blankPage !== 'true') originalIdx++;
-            }
-            if (originalIdx >= 0 && originalIdx < pdfDoc.numPages) {
-                const pdfPage = await pdfDoc.getPage(originalIdx + 1);
-                pdfWidthPts = pdfPage.getViewport({ scale: 1 }).width;
-            }
-        } catch (_) {}
-    }
+    // PDF-to-canvas scale: every page container records its PDF width in
+    // dataset.pdfWidth (regular, merged and blank pages alike).
+    const pdfWidthPts = parseFloat(targetPage.dataset.pdfWidth) || 612;
     const pdfScale = layoutWidth(canvas) / pdfWidthPts;
 
     const span = document.createElement('span');
@@ -1049,15 +1038,33 @@ initSignature((dataURL) => {
     importImages([file]);
 });
 
+// Palette color + opacity live together in the custom color popover — the
+// swatch button reflects both (8-digit hex over a checkerboard).
+let drawColorHex = '#e84444';
+let drawOpacityVal = 1;
+
 function syncDrawSettingsFromUI() {
     setDrawSettings({
-        color: drawColor.value,
+        color: drawColorHex,
         size: parseInt(drawSize.value, 10),
-        opacity: parseInt(drawOpacity.value, 10) / 100,
+        opacity: drawOpacityVal,
     });
     drawSizeLabel.textContent = drawSize.value;
-    drawOpacityLabel.textContent = drawOpacity.value + '%';
+    drawColor.style.setProperty('--swatch-color', combineHexAlpha(drawColorHex, drawOpacityVal));
 }
+
+drawColor.addEventListener('click', () => {
+    openColorPopover({
+        anchor: drawColor,
+        color: drawColorHex,
+        alpha: drawOpacityVal,
+        onChange(hex, a) {
+            drawColorHex = hex;
+            drawOpacityVal = Math.max(0.05, a); // an invisible brush helps no one
+            syncDrawSettingsFromUI();
+        },
+    });
+});
 
 function selectDrawTool(btn) {
     if (!btn) return;
@@ -1065,8 +1072,8 @@ function selectDrawTool(btn) {
     btn.classList.add('active');
     const tool = btn.dataset.tool;
     // The highlighter defaults to a marker yellow
-    if (tool === 'highlighter' && drawColor.value === '#e84444') {
-        drawColor.value = '#ffe83a';
+    if (tool === 'highlighter' && drawColorHex === '#e84444') {
+        drawColorHex = '#ffe83a';
     }
     setDrawSettings({ tool });
     syncDrawSettingsFromUI();
@@ -1128,9 +1135,7 @@ setOnStrokeComplete((stroke) => {
         toggleDrawMode(false);
     }
 });
-drawColor.addEventListener('input', syncDrawSettingsFromUI);
 drawSize.addEventListener('input', syncDrawSettingsFromUI);
-drawOpacity.addEventListener('input', syncDrawSettingsFromUI);
 
 // ============================================
 // Merge another PDF (append its pages after the current PDF)

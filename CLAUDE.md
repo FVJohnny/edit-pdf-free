@@ -56,6 +56,21 @@ Opens on `http://localhost:3000` by default.
 
 ## Testing
 
+### E2E suite (Playwright) — the source of truth
+
+```
+npm test              # full suite: desktop + touch projects (~2-3 min)
+npm run test:headed   # watch it run
+npx playwright test --project=desktop tests/e2e/draw.spec.js   # one spec
+```
+
+- Specs live in `tests/e2e/` (helpers in `helpers.js`); they start their own server on port 3556.
+- **Every bug found must be confirmed by an e2e test** — reproduce it in `regressions.spec.js` (or the relevant feature spec) as part of the fix. No bugfix is done without its test.
+- **Pushing requires the suite to pass**: a versioned pre-push hook (`.githooks/pre-push`, activated via `git config core.hooksPath .githooks`) runs `npx playwright test` and aborts the push on failure. After cloning, run `git config core.hooksPath .githooks` once.
+- New features need new spec coverage, same as the manual test plan below.
+
+### Manual testing
+
 Use the MCP Chrome tools (`mcp__chrome__*`) to test features in the browser. Launch Chrome, navigate to `http://localhost:3000`, and upload `tests/fixtures/with-colored-texts-and-images.pdf`.
 
 **Important:** Always interact like a real user — use `click`, `type`, `scroll`, `press_key`, and `screenshot` tools. Do NOT use `eval` to manipulate DOM, change text, or simulate events. Only use `eval` for setup that can't be done through the UI (e.g. uploading a file via the file input).

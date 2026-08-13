@@ -2,7 +2,8 @@
 // Text format toolbar
 // ============================================
 import { createFloatingToolbar } from './utils/floating-toolbar.js';
-import { rgbToHex, hexToRgb, rgbToCss } from './utils/color.js';
+import { rgbToHex, hexToRgb, combineHexAlpha } from './utils/color.js';
+import { openColorPopover } from './utils/color-popover.js';
 import { coverOriginalText } from './utils/canvas.js';
 import { MIN_FONT_SIZE } from './utils/constants.js';
 import { recordAction } from './history.js';
@@ -53,13 +54,15 @@ function currentWeight(item) { return item.fontWeightOverride ?? item.fontWeight
 function currentStyle(item) { return item.fontStyleOverride ?? item.fontStyle; }
 function currentSize(item) { return item.fontSizeOverride ?? Math.round(parseFloat(item.element.style.fontSize)); }
 function currentColor(item) { return item.textColorOverride ?? item.textColor; }
+function currentOpacity(item) { return item.textOpacityOverride ?? 1; }
 
 function updateToolbarState(textItem) {
     fmtBold.classList.toggle('active', currentWeight(textItem) === '700');
     fmtItalic.classList.toggle('active', currentStyle(textItem) === 'italic');
     fmtSizeLabel.textContent = currentSize(textItem);
     const color = currentColor(textItem);
-    fmtColor.value = rgbToHex(color.r, color.g, color.b);
+    fmtColor.style.setProperty('--swatch-color',
+        combineHexAlpha(rgbToHex(color.r, color.g, color.b), currentOpacity(textItem)));
     fmtFont.value = textItem.fontFamilyOverride || '';
     const align = textItem.alignOverride || 'left';
     fmtAlignLeft.classList.toggle('active', align === 'left');
@@ -73,8 +76,13 @@ function applyFormat(textItem) {
     el.style.fontStyle = currentStyle(textItem);
     el.style.fontSize = currentSize(textItem) + 'px';
 
-    if (textItem.textColorOverride) {
-        el.style.setProperty('--text-color', rgbToCss(textItem.textColorOverride));
+    {
+        // Always rewrite the var: undoing back to "no override" must restore
+        // the item's base color, not leave the previous rgba behind.
+        const c = currentColor(textItem);
+        const a = currentOpacity(textItem);
+        el.style.setProperty('--text-color',
+            `rgba(${Math.round(c.r * 255)}, ${Math.round(c.g * 255)}, ${Math.round(c.b * 255)}, ${a})`);
     }
 
     if (textItem.fontFamilyOverride) {
@@ -182,36 +190,39 @@ fmtDelete.addEventListener('click', () => {
 
 // Track text item and original color when color picker opens — the native
 // color dialog causes a blur event which clears activeItem before input fires.
-let colorPickerTextItem = null;
-let colorBeforePicker = null;
-
+// Text color & opacity: custom popover, live preview, one undo entry on close
 fmtColor.addEventListener('click', () => {
-    colorPickerTextItem = toolbar.getActiveItem();
-    if (colorPickerTextItem) {
-        colorBeforePicker = colorPickerTextItem.textColorOverride ?? colorPickerTextItem.textColor;
-    }
-});
-
-// Apply color live as the user drags in the picker (no undo recording)
-fmtColor.addEventListener('input', () => {
-    const textItem = toolbar.getActiveItem() || colorPickerTextItem;
+    const textItem = toolbar.getActiveItem();
     if (!textItem) return;
-    textItem.textColorOverride = hexToRgb(fmtColor.value);
-    applyFormat(textItem);
-    showFormatToolbar(textItem);
-});
-
-// Record a single undo action when the picker closes
-fmtColor.addEventListener('change', () => {
-    const textItem = toolbar.getActiveItem() || colorPickerTextItem;
-    if (textItem && colorBeforePicker) {
-        const oldColor = colorBeforePicker;
-        const newColor = hexToRgb(fmtColor.value);
-        recordAction({
-            undo() { textItem.textColorOverride = oldColor; applyFormat(textItem); },
-            redo() { textItem.textColorOverride = newColor; applyFormat(textItem); },
-        });
-    }
-    colorPickerTextItem = null;
-    colorBeforePicker = null;
+    const before = { color: textItem.textColorOverride, opacity: textItem.textOpacityOverride };
+    const cur = currentColor(textItem);
+    openColorPopover({
+        anchor: fmtColor,
+        color: rgbToHex(cur.r, cur.g, cur.b),
+        alpha: currentOpacity(textItem),
+        onChange(hex, a) {
+            textItem.textColorOverride = hexToRgb(hex);
+            // Only store an override when it actually deviates — full opacity
+            // must not force the fallback-font path on save.
+            textItem.textOpacityOverride = a < 1 ? Math.max(0.05, a) : undefined;
+            applyFormat(textItem);
+        },
+        onCommit() {
+            if (before.color === textItem.textColorOverride &&
+                before.opacity === textItem.textOpacityOverride) return;
+            const after = { color: textItem.textColorOverride, opacity: textItem.textOpacityOverride };
+            recordAction({
+                undo() {
+                    textItem.textColorOverride = before.color;
+                    textItem.textOpacityOverride = before.opacity;
+                    applyFormat(textItem);
+                },
+                redo() {
+                    textItem.textColorOverride = after.color;
+                    textItem.textOpacityOverride = after.opacity;
+                    applyFormat(textItem);
+                },
+            });
+        },
+    });
 });

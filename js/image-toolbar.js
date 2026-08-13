@@ -4,6 +4,7 @@
 import { createFloatingToolbar } from './utils/floating-toolbar.js';
 import { coverOriginalImage } from './utils/canvas.js';
 import { recordAction } from './history.js';
+import { clearStrokeSelection } from './draw.js';
 
 import { showToast } from './ui.js';
 
@@ -15,7 +16,10 @@ const imgRotateBtn = document.getElementById('imgRotate');
 const toolbar = createFloatingToolbar(imageToolbar, {
     shouldIgnoreTarget: (target) =>
         target.classList?.contains('draggable-image') ||
-        target.classList?.contains('img-resize-handle')
+        target.classList?.contains('img-resize-handle'),
+    // Runs on self-dismissal too — without it, tapping empty space hid the
+    // toolbar but left the image outlined "selected" forever.
+    onHide: (item) => item.element.classList.remove('selected'),
 });
 
 imgDeleteBtn.addEventListener('click', () => {
@@ -118,15 +122,16 @@ imgDownloadBtn.addEventListener('click', () => {
 });
 
 export function showImageToolbar(imageItemData) {
+    // Selections are exclusive: picking an image drops any selected stroke
+    // (their handlers stopPropagation, so global dismissers never see this).
+    clearStrokeSelection();
     document.querySelectorAll('.draggable-image.selected').forEach(el => el.classList.remove('selected'));
     imageItemData.element.classList.add('selected');
     toolbar.show(imageItemData);
 }
 
 export function hideImageToolbar() {
-    const item = toolbar.getActiveItem();
-    if (item) item.element.classList.remove('selected');
-    toolbar.hide();
+    toolbar.hide(); // onHide clears the selection outline
 }
 
 export function repositionImageToolbar(imageItemData) {

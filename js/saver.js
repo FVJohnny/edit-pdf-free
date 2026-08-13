@@ -35,7 +35,9 @@ export async function savePDF(pdfBytes, textItems, imageItems, pageOrder, drawnS
         await downloadPdf(modifiedPdfBytes, originalFileName);
     } catch (error) {
         console.error('Error saving PDF:', error);
-        showToast('Error saving PDF. Please try again.');
+        // Surface the actual reason — "please try again" hides bugs users
+        // could otherwise report precisely.
+        showToast('Error saving PDF: ' + (error?.message || error));
     }
 }
 
@@ -162,7 +164,8 @@ async function processModifiedText(doc, pages, textItems, fonts, fontInfoCache) 
             item.moveOffsetX !== 0 || item.moveOffsetY !== 0 ||
             item.fontWeightOverride || item.fontStyleOverride ||
             item.fontSizeOverride || item.textColorOverride ||
-            item.fontFamilyOverride || item.alignOverride;
+            item.fontFamilyOverride || item.alignOverride ||
+            item.textOpacityOverride != null;
         if (!isModified) continue;
         const pageIdx = item.finalPageIndex;
         if (pageIdx == null || pageIdx < 0) continue;
@@ -235,10 +238,13 @@ async function processModifiedText(doc, pages, textItems, fonts, fontInfoCache) 
             if (item.deleted) continue;
 
             const textColor = item.textColorOverride || item.textColor || { r: 0, g: 0, b: 0 };
+            const textOpacity = item.textOpacityOverride ?? 1;
             // Family/alignment changes also force the fallback font: the original
             // font can't be re-measured (alignment) or swapped (family).
+            // Opacity does too — the original-font path writes a raw content
+            // stream with no ExtGState, so it can't render transparency.
             const hasStyleOverride = item.fontWeightOverride || item.fontStyleOverride ||
-                item.fontFamilyOverride || item.alignOverride;
+                item.fontFamilyOverride || item.alignOverride || textOpacity < 1;
 
             // Original-font info is parsed from the ORIGIN page's resources;
             // when drawing on a different page the font ref must be registered
@@ -300,6 +306,7 @@ async function processModifiedText(doc, pages, textItems, fonts, fontInfoCache) 
                         size: lineFontSize,
                         font: fallbackFont,
                         color: PDFLib.rgb(textColor.r, textColor.g, textColor.b),
+                        opacity: textOpacity,
                     });
                 }
                 continue;
@@ -341,6 +348,7 @@ async function processModifiedText(doc, pages, textItems, fonts, fontInfoCache) 
                     size: fontSize,
                     font: fallbackFont,
                     color: PDFLib.rgb(textColor.r, textColor.g, textColor.b),
+                    opacity: textOpacity,
                 });
             }
         }
@@ -413,10 +421,21 @@ async function processImportedImages(doc, pages, imageItems) {
     }
 }
 
-/** Content hash for dedupe of identical imported images (SHA-256 hex). */
+/** Content hash for dedupe of identical imported images. */
 async function imageBytesKey(bytes) {
-    const digest = await crypto.subtle.digest('SHA-256', bytes);
-    return Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, '0')).join('');
+    // crypto.subtle only exists in secure contexts (HTTPS/localhost) — over
+    // plain HTTP (e.g. testing via LAN IP) fall back to a simple FNV-1a hash;
+    // dedupe quality barely matters, but saving must never fail.
+    if (crypto.subtle) {
+        const digest = await crypto.subtle.digest('SHA-256', bytes);
+        return Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, '0')).join('');
+    }
+    let h1 = 0x811c9dc5, h2 = 0xcbf29ce4;
+    for (let i = 0; i < bytes.length; i++) {
+        h1 = Math.imul(h1 ^ bytes[i], 0x01000193) >>> 0;
+        h2 = Math.imul(h2 ^ bytes[i], 0x01000197) >>> 0;
+    }
+    return bytes.length + '-' + h1.toString(16) + h2.toString(16);
 }
 
 // ============================================
@@ -520,8 +539,12 @@ function processDrawnStrokes(doc, pages, strokes) {
         // pass scale=1/scale to convert layout pixels → PDF points.
         // buildShapePath is the same builder the screen uses (pen/rect/arrow).
         const d = buildShapePath(stroke.shape || 'pen', stroke.points, stroke.size);
-        const { r, g, b } = hexToRgb(stroke.color);
-        const fill = stroke.fillColor ? hexToRgb(stroke.fillColor) : null;
+        // One stroke with an unparseable color (e.g. stale state from an old
+        // session) must not abort the whole save — fall back to black.
+        const sane = (c) => c && Number.isFinite(c.r) && Number.isFinite(c.g) && Number.isFinite(c.b)
+            ? c : { r: 0, g: 0, b: 0 };
+        const { r, g, b } = sane(hexToRgb(stroke.color || '#000000'));
+        const fill = stroke.fillColor ? sane(hexToRgb(stroke.fillColor)) : null;
         page.drawSvgPath(d, {
             x: 0,
             y: pageHeight,
@@ -530,7 +553,12 @@ function processDrawnStrokes(doc, pages, strokes) {
             borderWidth: stroke.size,
             borderOpacity: stroke.opacity ?? 1,
             borderLineCap: PDFLib.LineCapStyle?.Round,
-            ...(fill ? { color: PDFLib.rgb(fill.r, fill.g, fill.b), opacity: stroke.opacity ?? 1 } : {}),
+            // Fill opacity composes with the whole-stroke opacity, matching
+            // the on-screen SVG (opacity attr × fill-opacity attr).
+            ...(fill ? {
+                color: PDFLib.rgb(fill.r, fill.g, fill.b),
+                opacity: (stroke.fillOpacity ?? 1) * (stroke.opacity ?? 1),
+            } : {}),
         });
     }
 }

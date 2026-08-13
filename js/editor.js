@@ -53,7 +53,8 @@ export function makeEditable(textItem) {
         const isMoved = textItem.moveOffsetX !== 0 || textItem.moveOffsetY !== 0;
         const hasOverrides = textItem.fontWeightOverride || textItem.fontStyleOverride ||
                              textItem.fontSizeOverride || textItem.textColorOverride ||
-                             textItem.fontFamilyOverride || textItem.alignOverride;
+                             textItem.fontFamilyOverride || textItem.alignOverride ||
+                             textItem.textOpacityOverride != null;
         if (textItem.currentText !== textItem.originalText || isMoved || hasOverrides) {
             coverOriginalText(textItem, textItem.originalWidth);
             el.classList.add('modified');

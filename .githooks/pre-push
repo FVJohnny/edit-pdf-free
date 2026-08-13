@@ -1,0 +1,10 @@
+#!/bin/sh
+# Pushing requires the full e2e suite to pass. Bypass ONLY in an emergency
+# with: git push --no-verify
+echo "Running e2e tests before push (npx playwright test)..."
+npx playwright test || {
+    echo ""
+    echo "✗ e2e tests failed — push aborted."
+    exit 1
+}
+echo "✓ e2e tests passed."

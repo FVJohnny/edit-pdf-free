@@ -40,8 +40,11 @@ function openSignatureModal(onReady) {
     `;
 
     const canvas = overlay.querySelector('.signature-canvas');
-    canvas.style.width = CANVAS_W + 'px';
-    canvas.style.height = CANVAS_H + 'px';
+    // Fluid width (fits narrow modals) with a fixed aspect ratio; the
+    // drawing math maps client → bitmap coords via getBoundingClientRect,
+    // so display size is free to differ from the backing resolution.
+    canvas.style.maxWidth = CANVAS_W + 'px';
+    canvas.style.aspectRatio = `${CANVAS_W} / ${CANVAS_H}`;
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
@@ -112,7 +115,9 @@ function openSignatureModal(onReady) {
         overlay.classList.remove('visible');
         setTimeout(() => overlay.remove(), 300);
     };
-    overlay.querySelector('.modal-btn--cancel').addEventListener('click', close);
+    // Scope to the actions row — the Clear button also carries the
+    // modal-btn--cancel styling class and would match first otherwise.
+    overlay.querySelector('.modal-actions .modal-btn--cancel').addEventListener('click', close);
     overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
 
     confirmBtn.addEventListener('click', () => {

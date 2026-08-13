@@ -395,6 +395,17 @@ body.drag-over-page::after {
     padding: 24px;
     flex: 1 1 auto;
     min-width: 0;
+    /* Touch: long-pressing a page must not trigger the browser's native
+       element selection (blue overlay + copy callout on iOS). */
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+}
+
+/* The one exception: text being edited needs a real selection/caret. */
+.editable-text.editing {
+    -webkit-user-select: text;
+    user-select: text;
 }
 
 /* Touch: these elements handle their own pointer gestures (drag/resize/draw/
@@ -581,8 +592,12 @@ body.drag-over-page::after {
 }
 
 /* PDF Page rendering */
+/* Must be a block with no margin: the page container's height has to match
+   the canvas exactly, or the draw overlay (svg, preserveAspectRatio none)
+   stretches and strokes drift from their recorded coordinates. Inter-page
+   spacing comes from the container's own marginBottom. */
 .pdf-page {
-    margin-bottom: 20px;
+    display: block;
     border: 1px solid var(--border);
     background: white;
     border-radius: 4px;
@@ -682,7 +697,7 @@ body.drag-over-page::after {
 }
 
 .draggable-image.selected {
-    outline: 2px solid var(--accent);
+    outline: 2px dashed var(--accent); /* dashed — same language as text/shape selection */
 }
 
 /* Image resize handles */
@@ -938,11 +953,19 @@ body.drag-over-page::after {
     z-index: 30;
 }
 
+/* The dashed rect is also the drag surface: a selected shape moves by
+   grabbing anywhere inside its bounding box (corners resize). */
 .shape-selection-rect {
     position: absolute;
     border: 1.5px dashed rgba(232, 68, 68, 0.85);
     border-radius: 2px;
-    pointer-events: none;
+    pointer-events: auto;
+    cursor: move;
+    touch-action: none;
+}
+
+.pdf-viewer.draw-mode .shape-selection-rect {
+    pointer-events: none; /* don't block drawing new strokes on top */
 }
 
 .shape-handle {
@@ -956,6 +979,21 @@ body.drag-over-page::after {
     pointer-events: auto;
     cursor: nwse-resize;
     touch-action: none;
+}
+
+/* Generous invisible hit area — the handle paints above the selection-rect
+   drag surface, so without this any slightly-off tap moves the shape
+   instead of resizing it. */
+.shape-handle::after {
+    content: '';
+    position: absolute;
+    inset: -10px;
+}
+
+@media (hover: none), (pointer: coarse) {
+    .shape-handle::after {
+        inset: -16px;
+    }
 }
 
 .shape-handle[data-role="ne"],
@@ -1046,6 +1084,11 @@ body.drag-over-page::after {
 .draw-slider input[type="range"] {
     width: 90px;
     accent-color: var(--accent);
+}
+
+/* Compact sliders inside floating toolbars (stroke width / opacity) */
+.draw-slider--compact input[type="range"] {
+    width: 64px;
 }
 
 .draw-slider-value {

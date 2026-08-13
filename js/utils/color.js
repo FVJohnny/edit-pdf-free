@@ -28,6 +28,12 @@ export function rgbToCss(color) {
     return `rgb(${Math.round(color.r * 255)}, ${Math.round(color.g * 255)}, ${Math.round(color.b * 255)})`;
 }
 
+/** Combine "#rrggbb" + alpha (0–1) into "#rrggbbaa". */
+export function combineHexAlpha(hex, alpha) {
+    const a = Math.round(Math.max(0, Math.min(1, alpha)) * 255).toString(16).padStart(2, '0');
+    return hex + a;
+}
+
 /**
  * Find the most common color in a horizontal pixel strip.
  * Used internally by sampleBgColor and sampleImageBgColor.

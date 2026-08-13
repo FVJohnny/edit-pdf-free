@@ -14,7 +14,12 @@
 import { recordAction } from './history.js';
 import { DRAG_THRESHOLD } from './utils/constants.js';
 import { layoutWidth, layoutHeight } from './utils/canvas.js';
+import { combineHexAlpha } from './utils/color.js';
+import { openColorPopover } from './utils/color-popover.js';
 import { createFloatingToolbar } from './utils/floating-toolbar.js';
+// Circular with image-toolbar.js (it imports clearStrokeSelection) — safe:
+// both are function declarations only called at event time.
+import { hideImageToolbar } from './image-toolbar.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
@@ -37,6 +42,12 @@ export function setOnStrokeComplete(cb) {
 
 export function getSelectedStroke() {
     return selectedStroke;
+}
+
+/** Drop any stroke selection UI (outline, handles, toolbar). For new-doc loads. */
+export function clearStrokeSelection() {
+    if (selectedStroke) deselectStrokeIfSelected(selectedStroke);
+    else strokeToolbar.hide();
 }
 
 export function deleteSelectedStroke() {
@@ -103,10 +114,49 @@ function ensureOverlays() {
     }
 }
 
+/**
+ * Find a stroke on this page near the given layout-coordinate point.
+ * Widens each path's stroke temporarily so taps don't need pixel accuracy;
+ * filled shapes also hit anywhere inside their fill. Topmost wins.
+ */
+function findStrokeNear(pageContainer, x, y) {
+    const TOLERANCE = 22;
+    const pt = new DOMPoint(x, y);
+    let best = null;
+    for (const stroke of strokesArray) {
+        if (stroke.pageContainer !== pageContainer) continue;
+        const p = stroke.element;
+        if (!p.isConnected) continue;
+        const orig = p.getAttribute('stroke-width');
+        // stroke-width widens both sides of the centerline, so double the
+        // tolerance to get TOLERANCE px of actual reach from the line.
+        p.setAttribute('stroke-width', String((stroke.size || 2) + TOLERANCE * 2));
+        let hit = false;
+        try {
+            hit = p.isPointInStroke(pt) || (!!stroke.fillColor && p.isPointInFill(pt));
+        } catch (_) { /* older engines without geometry APIs */ }
+        p.setAttribute('stroke-width', orig);
+        if (hit) best = stroke;
+    }
+    return best;
+}
+
 /** Create and wire an SVG overlay for one page. */
 function attachOverlay(pageContainer) {
     const canvas = pageContainer.querySelector('canvas');
     if (!canvas) return;
+
+    // Outside draw mode, taps near (not exactly on) a stroke select it — the
+    // painted line alone is a hopeless touch target. Only background taps
+    // reach this listener: text/image handlers stopPropagation their own.
+    pageContainer.addEventListener('pointerdown', (e) => {
+        if (drawMode) return;
+        if (e.target.closest?.('.draw-overlay path, .shape-handles')) return;
+        const r = canvas.getBoundingClientRect();
+        const s = layoutWidth(canvas) / r.width;
+        const stroke = findStrokeNear(pageContainer, (e.clientX - r.left) * s, (e.clientY - r.top) * s);
+        if (stroke) startStrokeDrag(e, stroke);
+    });
 
     const svg = document.createElementNS(SVG_NS, 'svg');
     svg.setAttribute('class', 'draw-overlay');
@@ -118,6 +168,11 @@ function attachOverlay(pageContainer) {
     pageContainer.appendChild(svg);
 
     svg.addEventListener('pointerdown', (e) => beginStroke(e, svg, pageContainer, canvas));
+    // iOS Safari ignores touch-action on SVG elements, so the scroll gesture
+    // must be suppressed explicitly or drawing with a finger pans the page.
+    svg.addEventListener('touchstart', (e) => {
+        if (drawMode) e.preventDefault();
+    }, { passive: false });
 }
 
 /** Begin tracking a new stroke or shape. */
@@ -197,6 +252,7 @@ function beginStroke(mouseDownEvent, svg, pageContainer, canvas) {
 
         recordAction({
             undo() {
+                deselectStrokeIfSelected(stroke);
                 if (path.parentNode) path.parentNode.removeChild(path);
                 const idx = strokesArray.indexOf(stroke);
                 if (idx !== -1) strokesArray.splice(idx, 1);
@@ -223,33 +279,58 @@ function beginStroke(mouseDownEvent, svg, pageContainer, canvas) {
 const strokeToolbarEl = document.getElementById('strokeToolbar');
 const strokeColorInput = document.getElementById('strokeColorInput');
 const strokeFillInput = document.getElementById('strokeFillInput');
-const strokeFillNone = document.getElementById('strokeFillNone');
 const strokeDeleteBtn = document.getElementById('strokeDelete');
+const strokeWidthInput = document.getElementById('strokeWidthInput');
+const strokeWidthLabel = document.getElementById('strokeWidthLabel');
 
 const strokeToolbar = createFloatingToolbar(strokeToolbarEl, {
     shouldIgnoreTarget: (target) => target.classList?.contains('stroke-path'),
+    // Single cleanup point — runs on programmatic hide AND self-dismissal
+    // (outside clicks), so outline/handles can never outlive the toolbar.
+    onHide: (stroke) => {
+        stroke.element.classList.remove('stroke-selected');
+        if (selectedStroke === stroke) selectedStroke = null;
+        if (handlesStroke === stroke) removeShapeHandles();
+    },
 });
 
 let selectedStroke = null;
 
-// Keep the visual selection in sync when the floating toolbar dismisses itself
-document.addEventListener('pointerdown', (e) => {
-    if (!selectedStroke) return;
-    if (strokeToolbarEl.contains(e.target)) return;
-    if (e.target.classList?.contains('stroke-path')) return;
-    selectedStroke.element.classList.remove('stroke-selected');
-    selectedStroke = null;
-});
+/** Clear selection state (outline, handles, toolbar) if this stroke is selected. */
+function deselectStrokeIfSelected(stroke) {
+    if (selectedStroke !== stroke) return;
+    strokeToolbar.hide(); // onHide does the cleanup
+}
+
+/** Paint the toolbar's swatch buttons with the stroke's current colors. */
+function refreshStrokeSwatches(stroke) {
+    strokeColorInput.style.setProperty('--swatch-color', combineHexAlpha(stroke.color, stroke.opacity));
+    strokeFillInput.style.setProperty('--swatch-color',
+        stroke.fillColor ? combineHexAlpha(stroke.fillColor, stroke.fillOpacity ?? 1) : 'transparent');
+}
 
 function selectStroke(stroke) {
+    hideImageToolbar(); // selections are exclusive: drop any selected image
     if (selectedStroke) selectedStroke.element.classList.remove('stroke-selected');
     selectedStroke = stroke;
     stroke.element.classList.add('stroke-selected');
-    strokeColorInput.value = stroke.color;
-    strokeFillInput.value = stroke.fillColor || '#ffffff';
-    strokeFillNone.classList.toggle('active', !stroke.fillColor);
+    refreshStrokeSwatches(stroke);
+    // Fill only makes sense for closed shapes — a pen/highlighter line has
+    // just its line color, so hide the fill control for it.
+    const fillable = TWO_POINT_SHAPES.includes(stroke.shape) && stroke.shape !== 'arrow';
+    strokeFillInput.style.display = fillable ? '' : 'none';
+    strokeWidthInput.value = String(Math.round(stroke.size));
+    strokeWidthLabel.textContent = String(Math.round(stroke.size));
     strokeToolbar.show(stroke);
     showShapeHandles(stroke);
+}
+
+/** Re-apply a stroke's size/opacity to its SVG path (arrow heads scale with size). */
+function applyStrokeGeometry(stroke) {
+    stroke.element.setAttribute('stroke-width', String(stroke.size));
+    stroke.element.setAttribute('opacity', String(stroke.opacity));
+    stroke.element.setAttribute('d', buildShapePath(stroke.shape || 'pen', stroke.points, stroke.size));
+    positionShapeHandles(stroke); // selection padding tracks the width
 }
 
 // ============================================
@@ -268,13 +349,13 @@ function removeShapeHandles() {
 
 function showShapeHandles(stroke) {
     removeShapeHandles();
-    if (!TWO_POINT_SHAPES.includes(stroke.shape)) return;
     const layer = stroke.pageContainer.querySelector('.custom-text-layer');
     if (!layer) return;
 
+    const isTwoPoint = TWO_POINT_SHAPES.includes(stroke.shape);
     // Normalize box shapes so points[0]=top-left, points[1]=bottom-right —
     // makes the corner-handle math unambiguous. (Arrows keep their direction.)
-    if (stroke.shape !== 'arrow') {
+    if (isTwoPoint && stroke.shape !== 'arrow') {
         const [a, b] = stroke.points;
         stroke.points = [
             { x: Math.min(a.x, b.x), y: Math.min(a.y, b.y) },
@@ -285,11 +366,19 @@ function showShapeHandles(stroke) {
     handlesBox = document.createElement('div');
     handlesBox.className = 'shape-handles';
     handlesStroke = stroke;
-    // Dashed selection rectangle around the shape (like text selection)
+    // Dashed selection rectangle around the shape (like text selection).
+    // It doubles as the drag surface: a selected shape can be moved by
+    // grabbing anywhere inside its bounding box, not just the stroke itself.
     const rect = document.createElement('div');
     rect.className = 'shape-selection-rect';
+    rect.addEventListener('pointerdown', (e) => startStrokeDrag(e, stroke));
+    rect.addEventListener('touchstart', (e) => {
+        if (!drawMode) e.preventDefault();
+    }, { passive: false });
     handlesBox.appendChild(rect);
-    const roles = stroke.shape === 'arrow' ? ['p0', 'p1'] : ['nw', 'ne', 'sw', 'se'];
+    // Free-hand strokes get the selection box (for visibility + drag surface)
+    // but no resize handles — their geometry isn't two-point.
+    const roles = !isTwoPoint ? [] : stroke.shape === 'arrow' ? ['p0', 'p1'] : ['nw', 'ne', 'sw', 'se'];
     for (const role of roles) {
         const h = document.createElement('div');
         h.className = 'shape-handle';
@@ -312,13 +401,21 @@ function positionShapeHandles(stroke) {
         h.style.left = p.x + 'px';
         h.style.top = p.y + 'px';
     }
-    // Selection rectangle spans the shape's bounding box (plus stroke padding)
+    // Selection rectangle spans the bounding box of ALL points (free-hand
+    // strokes have many), plus stroke padding.
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const p of stroke.points) {
+        if (p.x < minX) minX = p.x;
+        if (p.y < minY) minY = p.y;
+        if (p.x > maxX) maxX = p.x;
+        if (p.y > maxY) maxY = p.y;
+    }
     const rect = handlesBox.querySelector('.shape-selection-rect');
     const pad = (stroke.size || 2) / 2 + 3;
-    rect.style.left = (Math.min(a.x, b.x) - pad) + 'px';
-    rect.style.top = (Math.min(a.y, b.y) - pad) + 'px';
-    rect.style.width = (Math.abs(b.x - a.x) + pad * 2) + 'px';
-    rect.style.height = (Math.abs(b.y - a.y) + pad * 2) + 'px';
+    rect.style.left = (minX - pad) + 'px';
+    rect.style.top = (minY - pad) + 'px';
+    rect.style.width = (maxX - minX + pad * 2) + 'px';
+    rect.style.height = (maxY - minY + pad * 2) + 'px';
 }
 
 function startHandleDrag(e, stroke, role) {
@@ -363,71 +460,95 @@ function startHandleDrag(e, stroke, role) {
     document.addEventListener('pointercancel', onUp);
 }
 
-/** Re-apply a stroke's colors to its SVG path. */
+/** Re-apply a stroke's colors + opacity to its SVG path. */
 function applyStrokeStyle(stroke) {
     stroke.element.setAttribute('stroke', stroke.color);
     stroke.element.setAttribute('fill', stroke.fillColor || 'none');
+    if (stroke.fillColor && stroke.fillOpacity != null) {
+        stroke.element.setAttribute('fill-opacity', String(stroke.fillOpacity));
+    } else {
+        stroke.element.removeAttribute('fill-opacity');
+    }
+    stroke.element.setAttribute('opacity', String(stroke.opacity));
+    if (selectedStroke === stroke) refreshStrokeSwatches(stroke);
 }
 
-// Line color: live preview on input, one undo entry when the picker closes
-let strokeColorBefore = null;
+// Line color & opacity: one popover, live preview, one undo entry on close
 strokeColorInput.addEventListener('click', () => {
-    strokeColorBefore = strokeToolbar.getActiveItem()?.color ?? null;
-});
-strokeColorInput.addEventListener('input', () => {
     const s = strokeToolbar.getActiveItem();
     if (!s) return;
-    s.color = strokeColorInput.value;
-    applyStrokeStyle(s);
-});
-strokeColorInput.addEventListener('change', () => {
-    const s = strokeToolbar.getActiveItem();
-    if (s && strokeColorBefore !== null && strokeColorBefore !== s.color) {
-        const oldC = strokeColorBefore;
-        const newC = s.color;
-        recordAction({
-            undo() { s.color = oldC; applyStrokeStyle(s); },
-            redo() { s.color = newC; applyStrokeStyle(s); },
-        });
-    }
-    strokeColorBefore = null;
+    const before = { color: s.color, opacity: s.opacity };
+    openColorPopover({
+        anchor: strokeColorInput,
+        color: s.color,
+        alpha: s.opacity,
+        onChange(hex, a) {
+            s.color = hex;
+            s.opacity = Math.max(0.05, a); // fully invisible lines help no one
+            applyStrokeStyle(s);
+        },
+        onCommit() {
+            if (before.color === s.color && before.opacity === s.opacity) return;
+            const after = { color: s.color, opacity: s.opacity };
+            recordAction({
+                undo() { Object.assign(s, before); applyStrokeStyle(s); },
+                redo() { Object.assign(s, after); applyStrokeStyle(s); },
+            });
+        },
+    });
 });
 
-// Fill color (+ transparent)
-let strokeFillBefore = null;
+// Fill color & opacity — 0% opacity means "no fill" (replaces the old
+// dedicated transparent-fill button)
 strokeFillInput.addEventListener('click', () => {
-    strokeFillBefore = strokeToolbar.getActiveItem()?.fillColor ?? null;
-});
-strokeFillInput.addEventListener('input', () => {
     const s = strokeToolbar.getActiveItem();
     if (!s) return;
-    s.fillColor = strokeFillInput.value;
-    strokeFillNone.classList.remove('active');
-    applyStrokeStyle(s);
-});
-strokeFillInput.addEventListener('change', () => {
-    const s = strokeToolbar.getActiveItem();
-    if (s && strokeFillBefore !== s.fillColor) {
-        const oldF = strokeFillBefore;
-        const newF = s.fillColor;
-        recordAction({
-            undo() { s.fillColor = oldF; applyStrokeStyle(s); },
-            redo() { s.fillColor = newF; applyStrokeStyle(s); },
-        });
-    }
-    strokeFillBefore = null;
+    const before = { fillColor: s.fillColor, fillOpacity: s.fillOpacity ?? null };
+    openColorPopover({
+        anchor: strokeFillInput,
+        color: s.fillColor || '#ffffff',
+        alpha: s.fillColor ? (s.fillOpacity ?? 1) : 0,
+        onChange(hex, a) {
+            s.fillColor = a === 0 ? null : hex;
+            s.fillOpacity = a === 0 ? null : a;
+            applyStrokeStyle(s);
+        },
+        onCommit() {
+            if (before.fillColor === s.fillColor && before.fillOpacity === (s.fillOpacity ?? null)) return;
+            const after = { fillColor: s.fillColor, fillOpacity: s.fillOpacity ?? null };
+            recordAction({
+                undo() { Object.assign(s, before); applyStrokeStyle(s); },
+                redo() { Object.assign(s, after); applyStrokeStyle(s); },
+            });
+        },
+    });
 });
 
-strokeFillNone.addEventListener('click', () => {
+// Width slider: live preview on input, one undo entry on release
+let strokeWidthBefore = null;
+const rememberWidth = () => {
     const s = strokeToolbar.getActiveItem();
-    if (!s || !s.fillColor) return;
-    const oldF = s.fillColor;
-    s.fillColor = null;
-    strokeFillNone.classList.add('active');
-    applyStrokeStyle(s);
+    strokeWidthBefore = s ? s.size : null;
+};
+strokeWidthInput.addEventListener('pointerdown', rememberWidth);
+strokeWidthInput.addEventListener('input', () => {
+    const s = strokeToolbar.getActiveItem();
+    if (!s) return;
+    if (strokeWidthBefore === null) rememberWidth(); // keyboard-driven changes skip pointerdown
+    s.size = parseInt(strokeWidthInput.value, 10);
+    strokeWidthLabel.textContent = strokeWidthInput.value;
+    applyStrokeGeometry(s);
+});
+strokeWidthInput.addEventListener('change', () => {
+    const s = strokeToolbar.getActiveItem();
+    if (!s || strokeWidthBefore === null) return;
+    const before = strokeWidthBefore;
+    strokeWidthBefore = null;
+    if (before === s.size) return;
+    const after = s.size;
     recordAction({
-        undo() { s.fillColor = oldF; applyStrokeStyle(s); },
-        redo() { s.fillColor = null; applyStrokeStyle(s); },
+        undo() { s.size = before; applyStrokeGeometry(s); },
+        redo() { s.size = after; applyStrokeGeometry(s); },
     });
 });
 
@@ -438,18 +559,17 @@ strokeDeleteBtn.addEventListener('click', () => {
 
 function deleteStroke(stroke) {
     const svg = stroke.element.parentNode;
+    deselectStrokeIfSelected(stroke);
     stroke.element.remove();
     const idx = strokesArray.indexOf(stroke);
     if (idx !== -1) strokesArray.splice(idx, 1);
-    stroke.element.classList.remove('stroke-selected');
-    selectedStroke = null;
-    strokeToolbar.hide();
     recordAction({
         undo() {
             svg.appendChild(stroke.element);
             strokesArray.push(stroke);
         },
         redo() {
+            deselectStrokeIfSelected(stroke);
             stroke.element.remove();
             const i = strokesArray.indexOf(stroke);
             if (i !== -1) strokesArray.splice(i, 1);
@@ -461,55 +581,77 @@ function deleteStroke(stroke) {
 function applyStrokeOffset(stroke, dx, dy) {
     stroke.points = stroke.points.map(p => ({ x: p.x + dx, y: p.y + dy }));
     stroke.element.setAttribute('d', buildShapePath(stroke.shape || 'pen', stroke.points, stroke.size));
+    positionShapeHandles(stroke);
+}
+
+/** Visually shift the selection handles during a drag (no point mutation). */
+function offsetShapeHandles(stroke, dx, dy) {
+    if (!handlesBox || handlesStroke !== stroke) return;
+    handlesBox.style.transform = `translate(${dx}px, ${dy}px)`;
 }
 
 function makeStrokeInteractive(stroke) {
     const path = stroke.element;
     path.classList.add('stroke-path');
-    path.addEventListener('pointerdown', (e) => {
-        if (drawMode) return; // while drawing, strokes are not draggable
-        e.preventDefault();
-        e.stopPropagation();
+    // iOS Safari ignores touch-action on SVG paths — suppress the scroll
+    // gesture explicitly so strokes can be dragged by finger.
+    path.addEventListener('touchstart', (e) => {
+        if (!drawMode) e.preventDefault();
+    }, { passive: false });
+    path.addEventListener('pointerdown', (e) => startStrokeDrag(e, stroke));
+}
 
-        const canvas = stroke.canvas;
-        const s = layoutWidth(canvas) / canvas.getBoundingClientRect().width;
-        const startX = e.clientX;
-        const startY = e.clientY;
-        let moved = false;
+/**
+ * Drag-to-move a stroke. Shared by the stroke path itself and the dashed
+ * selection rectangle, so a selected shape can be grabbed anywhere inside
+ * its bounding box (corners stay reserved for resizing).
+ */
+function startStrokeDrag(e, stroke) {
+    if (drawMode) return; // while drawing, strokes are not draggable
+    e.preventDefault();
+    e.stopPropagation();
 
-        const onMove = (ev) => {
-            const dx = (ev.clientX - startX) * s;
-            const dy = (ev.clientY - startY) * s;
-            if (!moved && Math.abs(dx) + Math.abs(dy) > DRAG_THRESHOLD) {
-                moved = true;
-                selectStroke(stroke);
-            }
-            if (moved) {
-                path.setAttribute('transform', `translate(${dx} ${dy})`);
-                strokeToolbar.reposition(stroke); // toolbar follows the drag
-            }
-        };
-        const onUp = (ev) => {
-            document.removeEventListener('pointermove', onMove);
-            document.removeEventListener('pointerup', onUp);
-            document.removeEventListener('pointercancel', onUp);
-            if (!moved) {
-                selectStroke(stroke);
-                return;
-            }
-            const dx = (ev.clientX - startX) * s;
-            const dy = (ev.clientY - startY) * s;
-            path.removeAttribute('transform');
-            applyStrokeOffset(stroke, dx, dy);
-            recordAction({
-                undo() { applyStrokeOffset(stroke, -dx, -dy); },
-                redo() { applyStrokeOffset(stroke, dx, dy); },
-            });
-        };
-        document.addEventListener('pointermove', onMove);
-        document.addEventListener('pointerup', onUp);
-        document.addEventListener('pointercancel', onUp);
-    });
+    const path = stroke.element;
+    const canvas = stroke.canvas;
+    const s = layoutWidth(canvas) / canvas.getBoundingClientRect().width;
+    const startX = e.clientX;
+    const startY = e.clientY;
+    let moved = false;
+
+    const onMove = (ev) => {
+        const dx = (ev.clientX - startX) * s;
+        const dy = (ev.clientY - startY) * s;
+        if (!moved && Math.abs(dx) + Math.abs(dy) > DRAG_THRESHOLD) {
+            moved = true;
+            selectStroke(stroke);
+        }
+        if (moved) {
+            path.setAttribute('transform', `translate(${dx} ${dy})`);
+            offsetShapeHandles(stroke, dx, dy); // selection rect + handles follow
+            strokeToolbar.reposition(stroke); // toolbar follows the drag
+        }
+    };
+    const onUp = (ev) => {
+        document.removeEventListener('pointermove', onMove);
+        document.removeEventListener('pointerup', onUp);
+        document.removeEventListener('pointercancel', onUp);
+        if (!moved) {
+            selectStroke(stroke);
+            return;
+        }
+        const dx = (ev.clientX - startX) * s;
+        const dy = (ev.clientY - startY) * s;
+        path.removeAttribute('transform');
+        if (handlesBox && handlesStroke === stroke) handlesBox.style.transform = '';
+        applyStrokeOffset(stroke, dx, dy);
+        recordAction({
+            undo() { applyStrokeOffset(stroke, -dx, -dy); },
+            redo() { applyStrokeOffset(stroke, dx, dy); },
+        });
+    };
+    document.addEventListener('pointermove', onMove);
+    document.addEventListener('pointerup', onUp);
+    document.addEventListener('pointercancel', onUp);
 }
 
 /**
