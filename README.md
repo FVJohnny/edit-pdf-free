@@ -139,4 +139,4 @@ tests/
 
 ## License
 
-MIT
+[IDGAF](LICENSE) — do whatever you want with it.
