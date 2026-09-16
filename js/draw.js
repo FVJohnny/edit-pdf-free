@@ -180,6 +180,7 @@ function beginStroke(mouseDownEvent, svg, pageContainer, canvas) {
     if (!drawMode) return;
     mouseDownEvent.preventDefault();
     mouseDownEvent.stopPropagation();
+    svg.setPointerCapture(mouseDownEvent.pointerId);
 
     const { tool, color, size, opacity } = settings;
     // Highlighter is just a wide translucent pen stroke

@@ -16,6 +16,8 @@ export async function startBlank(page) {
     await page.evaluate(() => window.indexedDB?.deleteDatabase?.('pdf-editor-autosave'));
     await page.click('.upload-blank-btn');
     await expect(page.locator('.pdf-viewer > div')).toHaveCount(1);
+    await expect(page.locator('#pdfViewer')).toHaveAttribute('aria-busy','false');
+    await page.locator('.editor-wrapper').scrollIntoViewIfNeeded();
     await settle(page);
 }
 
@@ -25,6 +27,8 @@ export async function loadFixture(page, file = MAIN_PDF) {
     await page.evaluate(() => window.indexedDB?.deleteDatabase?.('pdf-editor-autosave'));
     await page.setInputFiles('#pdfInput', file);
     await expect(page.locator('.pdf-viewer > div').first()).toBeVisible({ timeout: 15000 });
+    await expect(page.locator('#pdfViewer')).toHaveAttribute('aria-busy','false');
+    await page.locator('.editor-wrapper').scrollIntoViewIfNeeded();
     await settle(page);
 }
 
@@ -49,8 +53,13 @@ export async function settle(page) {
  */
 export async function canvasPoint(page, relX, relY, pageIndex = 0) {
     const vp = page.viewportSize();
-    const TOP = 240;                 // below the pinned toolbar/tools bars
-    const BOTTOM = vp.height - 40;
+    await page.locator('.pdf-viewer').scrollIntoViewIfNeeded();
+    await settle(page);
+    const viewer = await page.locator('.pdf-viewer').boundingBox();
+    const tools = await page.locator('#pdfTools').boundingBox();
+    // Sticky bars are not at a fixed viewport Y after editing a footer.
+    const TOP = Math.max(viewer.y, tools.y + tools.height, 0) + 30;
+    const BOTTOM = Math.min(viewer.y + viewer.height, vp.height) - 30;
     for (let i = 0; i < 5; i++) {
         const box = await page.locator('canvas.pdf-page').nth(pageIndex).boundingBox();
         const x = box.x + box.width * relX;
@@ -59,7 +68,7 @@ export async function canvasPoint(page, relX, relY, pageIndex = 0) {
         await page.evaluate(([delta]) => {
             document.querySelector('.pdf-viewer').scrollTop += delta;
         }, [y < TOP ? y - TOP - 120 : y - BOTTOM + 120]);
-        await page.waitForTimeout(150);
+        await settle(page);
     }
     const box = await page.locator('canvas.pdf-page').nth(pageIndex).boundingBox();
     return { x: box.x + box.width * relX, y: box.y + box.height * relY };
@@ -88,6 +97,7 @@ export async function drawStroke(page, tool, from, to) {
     // moves reach the app through document listeners regardless), then take
     // BOTH points from a single box snapshot — computing them separately can
     // scroll in between and leave the first point stale.
+    await canvasPoint(page, to[0], to[1]);
     await canvasPoint(page, from[0], from[1]);
     const box = await page.locator('canvas.pdf-page').first().boundingBox();
     const a = { x: box.x + box.width * from[0], y: box.y + box.height * from[1] };
@@ -144,7 +154,10 @@ export async function countPixels(page, rect, target, tol = 60, pageIndex = 0) {
 export async function savePdf(page) {
     const downloadPromise = page.waitForEvent('download');
     await page.click('#saveBtn');
-    await page.click('.modal-actions .modal-btn--confirm');
+    await page.locator('.modal-overlay.visible').last().waitFor({state:'visible'});
+    const substitution=page.getByRole('button',{name:'Save with substitute fonts',exact:false});
+    if(await substitution.isVisible())await substitution.click();
+    await page.click('.modal-overlay.visible .modal-actions .modal-btn--confirm');
     const download = await downloadPromise;
     return download.path();
 }
@@ -156,6 +169,8 @@ export async function saveAndReload(page) {
     await page.evaluate(() => window.indexedDB?.deleteDatabase?.('pdf-editor-autosave'));
     await page.setInputFiles('#pdfInput', file);
     await expect(page.locator('.pdf-viewer > div').first()).toBeVisible({ timeout: 15000 });
+    await expect(page.locator('#pdfViewer')).toHaveAttribute('aria-busy','false');
+    await page.locator('.editor-wrapper').scrollIntoViewIfNeeded();
     await settle(page);
 }
 

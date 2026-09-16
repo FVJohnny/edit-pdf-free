@@ -6,9 +6,12 @@
   "scripts": {
     "start": "npx serve .",
     "test": "playwright test",
-    "test:headed": "playwright test --headed"
+    "test:headed": "playwright test --headed",
+    "vendor:mupdf": "node scripts/vendor-mupdf.mjs",
+    "test:browsers": "playwright test --config=playwright.cross-browser.config.js"
   },
   "dependencies": {
+    "mupdf": "1.28.1",
     "pdf-lib": "^1.17.1"
   },
   "devDependencies": {

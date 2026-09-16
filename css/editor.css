@@ -365,7 +365,9 @@ body.drag-over-page::after {
     cursor: crosshair;
 }
 .pdf-viewer.draw-mode .editable-text,
-.pdf-viewer.draw-mode .draggable-image {
+.pdf-viewer.draw-mode .draggable-image,
+.pdf-viewer.placement-mode .editable-text,
+.pdf-viewer.placement-mode .draggable-image {
     pointer-events: none !important;
 }
 .pdf-viewer.draw-mode .draw-overlay {
@@ -463,7 +465,8 @@ body.drag-over-page::after {
 .minimap-delete {
     position: absolute;
     top: 2px;
-    display: none;
+    display: flex;
+    opacity: 0;
     align-items: center;
     justify-content: center;
     width: 18px;
@@ -504,8 +507,9 @@ body.drag-over-page::after {
 
 .pdf-minimap-page:hover .minimap-handle,
 .pdf-minimap-page:hover .minimap-rotate,
-.pdf-minimap-page:hover .minimap-delete {
-    display: flex;
+.pdf-minimap-page:hover .minimap-delete,
+.pdf-minimap-page:focus-within button {
+    opacity: 1;
 }
 
 .minimap-drop-marker {
@@ -668,7 +672,7 @@ body.drag-over-page::after {
     background-repeat: no-repeat;
 }
 
-.draggable-image:not(.dragging):not(.moved) {
+.draggable-image:not(.dragging):not(.moved):not(.original-removed) {
     background-image: none !important;
 }
 
@@ -1103,4 +1107,23 @@ body.drag-over-page::after {
     inset: 0;
     pointer-events: none;
     z-index: 5;
+}
+
+/* Text backgrounds are rendered from the actual PDF with the old glyphs removed. */
+.editable-text.modified, .editable-text.editing, .editable-text.modified:hover {
+    background: transparent;
+}
+.editable-text:hover:not(.modified):not(.editing) {
+    color: transparent;
+    background: transparent;
+}
+
+.edit-notice { padding: 9px 16px; font-size: .8rem; line-height: 1.5; color: #a9cdb9; background: #16201d; overflow-wrap: anywhere; }
+.edit-notice[data-warning="true"] { color: #f0cf96; background: #292217; }
+.edit-notice[hidden] { display: none; }
+
+/* Type3 glyph programs have no browser font; completed edits are rendered by PDF.js. */
+.editable-text[data-native-preview]:not(.editing) {
+    color: transparent !important;
+    background: transparent !important;
 }

@@ -17,12 +17,13 @@ export function makeEditable(textItem) {
 
     el.style.minWidth = textItem.originalWidth + 'px';
     // Render \n as line breaks while editing (and after, for multi-line text)
-    el.style.whiteSpace = 'pre-wrap';
+    el.style.whiteSpace = 'pre';
     // plaintext-only makes Enter insert plain \n and strips pasted formatting;
     // fall back to true where unsupported
     el.contentEditable = 'plaintext-only';
     if (!el.isContentEditable) el.contentEditable = 'true';
     el.classList.add('editing');
+    if(textItem.nativePreview){el.removeAttribute('data-native-preview');document.dispatchEvent(new Event('text-background-change'));}
     el.focus();
 
     const range = document.createRange();
@@ -31,8 +32,12 @@ export function makeEditable(textItem) {
     selection.removeAllRanges();
     selection.addRange(range);
 
+    coverOriginalText(textItem, textItem.originalWidth);
     showFormatToolbar(textItem);
 
+    const reportStatus = () => document.dispatchEvent(new CustomEvent('text-edit-status',{detail:textItem}));
+    reportStatus();
+    el.addEventListener('input',reportStatus);
     const textBefore = textItem.currentText;
 
     /** Read the edited text preserving line breaks (innerText keeps <br>/<div> breaks). */
@@ -43,6 +48,7 @@ export function makeEditable(textItem) {
         if (finished) return; // runs via Enter/Escape, blur AND outside-pointer — only once
         finished = true;
         el.removeEventListener('keydown', onKeyDown);
+        el.removeEventListener('input',reportStatus);
         document.removeEventListener('pointerdown', onOutsidePointer, true);
         el.contentEditable = 'false';
         el.classList.remove('editing');
@@ -50,6 +56,8 @@ export function makeEditable(textItem) {
         // Normalize the DOM content back to plain text with \n
         el.textContent = textAfter;
         textItem.currentText = textAfter;
+        if(textItem.nativePreview)document.dispatchEvent(new Event('text-background-change'));
+        reportStatus();
         const isMoved = textItem.moveOffsetX !== 0 || textItem.moveOffsetY !== 0;
         const hasOverrides = textItem.fontWeightOverride || textItem.fontStyleOverride ||
                              textItem.fontSizeOverride || textItem.textColorOverride ||
@@ -60,13 +68,13 @@ export function makeEditable(textItem) {
             el.classList.add('modified');
             el.style.minWidth = textItem.originalWidth + 'px';
         } else {
-            el.classList.remove('modified');
+            el.classList.toggle('modified', textItem.originalCovered);
             el.style.minWidth = '';
         }
         // When focus moved INTO the toolbar (e.g. opening the font select),
         // the user is formatting, not leaving — keep the toolbar open.
         const toolbarEl = document.getElementById('formatToolbar');
-        const focusMovedIntoToolbar = event?.relatedTarget && toolbarEl.contains(event.relatedTarget);
+        const focusMovedIntoToolbar = event?.relatedTarget && toolbarEl.contains(event.relatedTarget) || event?.type==='blur' && toolbarEl.dataset.pointerFocus==='true';
         if (!focusMovedIntoToolbar) hideFormatToolbar();
 
         // Record undo action if text actually changed
@@ -75,10 +83,12 @@ export function makeEditable(textItem) {
                 undo() {
                     textItem.currentText = textBefore;
                     textItem.element.textContent = textBefore;
+                    reportStatus();
                 },
                 redo() {
                     textItem.currentText = textAfter;
                     textItem.element.textContent = textAfter;
+                    reportStatus();
                 },
             });
         }

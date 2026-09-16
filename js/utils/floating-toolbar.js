@@ -96,13 +96,35 @@ export function createFloatingToolbar(toolbarEl, { shouldIgnoreTarget, onHide })
         if (activeItem) reposition(activeItem);
     });
 
-    // Prevent toolbar clicks from stealing focus/blur from editable elements.
-    // Form controls are exempt: they need native focus to work — on iOS,
-    // preventing pointerdown stops color/select inputs from ever opening.
+    // Keep the inline selection while using buttons. Handle a touch button
+    // on pointerup explicitly: WebKit suppresses click after preventDefault,
+    // while Chromium can synthesize it even after the keyboard moved the bar.
+    let touchedButton=null, suppressUntil=0;
+    toolbarEl.addEventListener('click',e=>{
+        if(e.isTrusted&&performance.now()<suppressUntil&&touchedButton?.contains(e.target)){
+            e.preventDefault();e.stopImmediatePropagation();
+        }
+    },true);
     toolbarEl.addEventListener('pointerdown', (e) => {
         if (e.target.closest('input, select, textarea, label')) return;
         e.preventDefault();
+        const button=e.target.closest('button');
+        if(e.pointerType!=='touch'||!button)return;
+        const startX=e.clientX,startY=e.clientY,id=e.pointerId;
+        button.setPointerCapture(id);
+        const finish=event=>{
+            if(event.pointerId!==id)return;
+            button.removeEventListener('pointerup',finish);
+            button.removeEventListener('pointercancel',finish);
+            touchedButton=button;suppressUntil=performance.now()+700;
+            if(event.type==='pointerup'&&Math.hypot(event.clientX-startX,event.clientY-startY)<12)button.click();
+        };
+        button.addEventListener('pointerup',finish);
+        button.addEventListener('pointercancel',finish);
     });
+
+    // Safari may blur contentEditable without relatedTarget on a touch tap.
+    document.addEventListener('pointerdown',e=>{toolbarEl.dataset.pointerFocus=String(toolbarEl.contains(e.target));},true);
 
     // Dismiss when clicking outside both the toolbar and the active item
     document.addEventListener('pointerdown', (e) => {

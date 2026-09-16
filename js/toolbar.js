@@ -54,7 +54,7 @@ function currentWeight(item) { return item.fontWeightOverride ?? item.fontWeight
 function currentStyle(item) { return item.fontStyleOverride ?? item.fontStyle; }
 function currentSize(item) { return item.fontSizeOverride ?? Math.round(parseFloat(item.element.style.fontSize)); }
 function currentColor(item) { return item.textColorOverride ?? item.textColor; }
-function currentOpacity(item) { return item.textOpacityOverride ?? 1; }
+function currentOpacity(item) { return item.textOpacityOverride ?? item.textColor?.opacity ?? 1; }
 
 function updateToolbarState(textItem) {
     fmtBold.classList.toggle('active', currentWeight(textItem) === '700');
@@ -63,6 +63,7 @@ function updateToolbarState(textItem) {
     const color = currentColor(textItem);
     fmtColor.style.setProperty('--swatch-color',
         combineHexAlpha(rgbToHex(color.r, color.g, color.b), currentOpacity(textItem)));
+    fmtFont.options[0].textContent = textItem.sourceFontName ? `Original (${textItem.sourceFontName.replace(/^[A-Z]{6}\+/, '')})` : 'Original';
     fmtFont.value = textItem.fontFamilyOverride || '';
     const align = textItem.alignOverride || 'left';
     fmtAlignLeft.classList.toggle('active', align === 'left');
@@ -71,6 +72,7 @@ function updateToolbarState(textItem) {
 }
 
 function applyFormat(textItem) {
+    document.dispatchEvent(new CustomEvent('text-edit-status',{detail:textItem}));
     const el = textItem.element;
     el.style.fontWeight = currentWeight(textItem);
     el.style.fontStyle = currentStyle(textItem);
@@ -88,7 +90,7 @@ function applyFormat(textItem) {
     if (textItem.fontFamilyOverride) {
         el.style.fontFamily = FAMILY_CSS[textItem.fontFamilyOverride] || textItem.fontFamilyOverride;
     } else {
-        el.style.fontFamily = textItem.fontFamily;
+        el.style.fontFamily = textItem.loadedFontName && !textItem.fontWeightOverride && !textItem.fontStyleOverride ? `'${textItem.loadedFontName}', ${textItem.fontFamily}` : textItem.fontFamily;
     }
 
     // Alignment needs a box wider than the text — min-width covers it
@@ -202,9 +204,8 @@ fmtColor.addEventListener('click', () => {
         alpha: currentOpacity(textItem),
         onChange(hex, a) {
             textItem.textColorOverride = hexToRgb(hex);
-            // Only store an override when it actually deviates — full opacity
-            // must not force the fallback-font path on save.
-            textItem.textOpacityOverride = a < 1 ? Math.max(0.05, a) : undefined;
+            // Preserve explicit full opacity too when the original is translucent.
+            textItem.textOpacityOverride = Math.max(0.05, a);
             applyFormat(textItem);
         },
         onCommit() {

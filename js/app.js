@@ -1,10 +1,12 @@
+import { loadPdfDocument } from './pdf-loader.js';
 import { initDragDrop, showToast, showChoices, showPrompt } from './ui.js';
-import { renderPDF, setupImageDrag, setupTextDrag, createBlankPageContainer, renderMergedPage, rerenderAllPages } from './renderer.js';
+import { renderPDF, setupImageDrag, setupTextDrag, createBlankPageContainer, renderMergedPage, rerenderAllPages, setPagePreviewDocument } from './renderer.js';
 import { coverOriginalText, coverOriginalImage, layoutWidth, layoutHeight } from './utils/canvas.js';
 import { combineHexAlpha } from './utils/color.js';
 import { openColorPopover } from './utils/color-popover.js';
 import { makeEditable } from './editor.js';
 import { savePDF, buildPdfBytes } from './saver.js';
+import { inspectTextFonts } from './saver.js';
 import { undo, redo, onHistoryChange, clearHistory, recordAction } from './history.js';
 import { getActiveTextItem, hideFormatToolbar } from './toolbar.js';
 import { hideImageToolbar, showImageToolbar } from './image-toolbar.js';
@@ -27,6 +29,7 @@ let addedPages = []; // [{ position: 'start'|'end', width, height, container }]
 let mergedPages = []; // [{ sourceBytes, sourceId, sourcePageIndex, container }]
 let drawnStrokes = []; // [{ pageContainer, canvas, element, color, size, opacity, points }]
 let originalFileName = '';
+let documentGeneration = 0;
 
 const pdfInput = document.getElementById('pdfInput');
 const saveBtn = document.getElementById('saveBtn');
@@ -156,6 +159,7 @@ onHistoryChange(({ canUndo, canRedo }) => {
     redoBtn.disabled = !canRedo;
     scheduleSizeEstimate();
     scheduleMinimapRebuild();
+    scheduleTextBackground();
 });
 
 document.addEventListener('keydown', (e) => {
@@ -261,14 +265,9 @@ pdfInput.addEventListener('change', (e) => {
 });
 
 newFileBtn.addEventListener('click', () => {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = '.pdf';
-    input.onchange = (e) => {
-        const file = e.target.files[0];
-        if (file) loadPDF(file);
-    };
-    input.click();
+    // Use the attached input in every browser and allow re-opening the same file.
+    pdfInput.value='';
+    pdfInput.click();
 });
 
 // ============================================
@@ -347,13 +346,17 @@ initDragDrop(async (files, point) => {
 // Load PDF
 // ============================================
 async function loadPDF(file) {
+    documentGeneration++;
+    pdfViewer.setAttribute('aria-busy','true');
+    saveBtn.disabled=true;
+    document.dispatchEvent(new CustomEvent('text-edit-status',{detail:null}));
     try {
         originalFileName = file.name.replace(/\.pdf$/i, '');
 
         const arrayBuffer = await file.arrayBuffer();
         pdfBytes = new Uint8Array(arrayBuffer);
 
-        const loadingTask = pdfjsLib.getDocument({ data: pdfBytes.slice() });
+        const loadingTask = loadPdfDocument(pdfBytes.slice());
         // Password-protected PDFs: ask the user (again on a wrong password)
         loadingTask.onPassword = async (updatePassword, reason) => {
             const wrong = reason === pdfjsLib.PasswordResponses.INCORRECT_PASSWORD;
@@ -376,7 +379,6 @@ async function loadPDF(file) {
         pdfTools.classList.add('visible');
         pdfContainer.classList.add('visible');
         fileNameEl.textContent = file.name;
-        saveBtn.disabled = false;
 
         clearHistory();
         hideFormatToolbar();
@@ -388,6 +390,9 @@ async function loadPDF(file) {
         // Exit draw mode on new file load (strokes cleared, palette hidden).
         if (isDrawMode()) toggleDrawMode(false);
         await renderPDF(pdfDoc, pdfViewer, textItems, imageItems);
+        saveBtn.disabled=false;
+        pdfViewer.setAttribute('aria-busy','false');
+        applyZoom();
         updatePageIndicator();
         rebuildMinimap();
         scheduleSizeEstimate();
@@ -398,6 +403,7 @@ async function loadPDF(file) {
             document.querySelector('.editor-wrapper').scrollIntoView({ behavior: 'smooth', block: 'start' });
         }, 100);
     } catch (error) {
+        pdfViewer.setAttribute('aria-busy','false');
         console.error('Error loading PDF:', error);
         alert('Error loading PDF file. Please try another file.');
     }
@@ -811,6 +817,74 @@ function scaleToFit(width, height, maxWidth, maxHeight) {
     return { width, height };
 }
 
+// Render the original page artwork with edited glyphs removed; DOM text remains
+// interactive. Version checks prevent slow renders repainting a newer edit/file.
+let textBackgroundTimer;
+let textBackgroundVersion = 0;
+let textBackgroundRunning = false;
+let textBackgroundPending = false;
+document.addEventListener('text-background-change', scheduleTextBackground);
+function scheduleTextBackground() {
+    textBackgroundVersion++;
+    clearTimeout(textBackgroundTimer);
+    textBackgroundTimer = setTimeout(refreshTextBackground, 100);
+}
+async function refreshTextBackground() {
+    if (!pdfBytes || !textItems.some(t => t.originalCovered && t.originalText) && !imageItems.some(i=>i.type==='image'&&i.originalCovered)) return;
+    if (textBackgroundRunning) { textBackgroundPending = true; return; }
+    textBackgroundRunning = true;
+    const version = textBackgroundVersion, source = pdfBytes;
+    let rendered;
+    try {
+        const order = collectSaveState();
+        const containers = [...pdfViewer.querySelectorAll(':scope > div')];
+        const bytes = await buildPdfBytes(source, textItems, imageItems, order, [], { backgroundOnly: true, onOriginalStyles(styles) {
+            if (version !== textBackgroundVersion || source !== pdfBytes) return;
+            for (const item of textItems) {
+                const first = item.subItems?.[0] || item;
+                const color = styles[JSON.stringify([item.originPageIndex, first.transform, first.width])];
+                if (!color) continue;
+                item.textColor = color;
+                if (!item.textColorOverride) {
+                    item.element.style.setProperty('--text-color', `rgba(${color.r*255},${color.g*255},${color.b*255},${item.textOpacityOverride ?? color.opacity ?? 1})`);
+                }
+            }
+        } });
+        if (version !== textBackgroundVersion || source !== pdfBytes) return;
+        rendered = await loadPdfDocument(bytes).promise;
+        for (let i = 0; i < containers.length; i++) {
+            const canvas = containers[i].querySelector('canvas.pdf-page');
+            if (!canvas) continue;
+            const page = await rendered.getPage(i + 1);
+            const viewport = page.getViewport({ scale: canvas.width / page.getViewport({scale:1}).width });
+            const off = document.createElement('canvas');
+            off.width = canvas.width; off.height = canvas.height;
+            await page.render({ canvasContext: off.getContext('2d'), viewport }).promise;
+            if (version !== textBackgroundVersion || source !== pdfBytes) return;
+            // A zoom may have resized the backing while this render was pending.
+            if (canvas.width !== off.width || canvas.height !== off.height) {
+                scheduleTextBackground();
+                return;
+            }
+            canvas.getContext('2d').drawImage(off, 0, 0);
+
+        }
+        for(const item of textItems){
+            if(item.nativePreview&&item.originalCovered&&!item.deleted&&!item.element.isContentEditable)item.element.dataset.nativePreview='true';
+        }
+        await setPagePreviewDocument(containers, rendered);
+        rendered = null; // renderer owns the cleaned document until the next edit/load
+        scheduleMinimapRebuild();
+    } catch (error) {
+        console.error('Text preview failed:', error);
+        showToast('Text preview could not update: ' + error.message);
+    } finally {
+        await rendered?.destroy();
+        textBackgroundRunning = false;
+        if (textBackgroundPending) { textBackgroundPending = false; scheduleTextBackground(); }
+    }
+}
+
 // ============================================
 // Estimated output size — runs the real save pipeline (without downloading)
 // in the background, debounced, so the number is the exact byte count.
@@ -842,13 +916,20 @@ async function runSizeEstimate() {
         return;
     }
     sizeEstimateRunning = true;
+    const source = pdfBytes;
+    const generation = documentGeneration;
+    const fileName = originalFileName;
     try {
         const pageOrder = collectSaveState();
-        const bytes = await buildPdfBytes(pdfBytes, textItems, imageItems, pageOrder, drawnStrokes);
+        const bytes = await buildPdfBytes(source, textItems, imageItems, pageOrder, drawnStrokes);
+        // A slower build from a previous document must never replace recovery
+        // or the size indicator for the document now on screen.
+        if (source !== pdfBytes || generation !== documentGeneration) return;
         sizeIndicator.textContent = formatBytes(bytes.length);
         // The built PDF doubles as the autosave snapshot
-        saveSession(bytes, originalFileName);
+        saveSession(bytes, fileName);
     } catch (err) {
+        if (source !== pdfBytes || generation !== documentGeneration) return;
         console.error('Size estimate failed:', err);
         sizeIndicator.textContent = '–';
     } finally {
@@ -906,7 +987,9 @@ function applyZoom() {
     zoomLabel.textContent = Math.round(currentZoom * 100) + '%';
     const pages = pdfViewer.querySelectorAll(':scope > div');
     for (const page of pages) {
-        page.style.transformOrigin = 'top center';
+        // Growing around the center makes the left edge unreachable at >100%.
+        page.style.transformOrigin = currentZoom>1?'top left':'top center';
+        page.style.alignSelf = currentZoom>1?'flex-start':'center';
         page.style.transform = currentZoom === 1 ? '' : `scale(${currentZoom})`;
         // Adjust margin to account for scaled size so pages don't overlap
         const canvas = page.querySelector('canvas');
@@ -925,25 +1008,11 @@ let zoomRerenderTimer = null;
 function scheduleZoomRerender() {
     clearTimeout(zoomRerenderTimer);
     zoomRerenderTimer = setTimeout(async () => {
-        await rerenderAllPages(pdfViewer, currentZoom, replayCovers);
+        // Canvas pixels must cover physical display pixels, not just CSS pixels.
+        const density = Math.max(1, window.devicePixelRatio || 1);
+        await rerenderAllPages(pdfViewer, currentZoom * density);
         rebuildMinimap();
     }, 350);
-}
-
-/** After a page's canvas was re-rendered, repaint the covers that were on it. */
-function replayCovers(container, canvas) {
-    for (const item of textItems) {
-        if (item.originalCovered && (item.originCanvas || item.canvas) === canvas) {
-            item.originalCovered = false;
-            coverOriginalText(item, item.lastCoverWidth || item.originalWidth);
-        }
-    }
-    for (const item of imageItems) {
-        if (item.originalCovered && (item.originCanvas || item.canvas) === canvas) {
-            item.originalCovered = false;
-            coverOriginalImage(item);
-        }
-    }
 }
 
 zoomInBtn.addEventListener('click', () => {
@@ -1157,7 +1226,7 @@ async function mergePDFFile(file) {
         const sourceBytes = new Uint8Array(arrayBuffer);
 
         // Open with PDF.js for rendering
-        const loadingTask = pdfjsLib.getDocument({ data: sourceBytes.slice() });
+        const loadingTask = loadPdfDocument(sourceBytes.slice());
         const sourceDoc = await loadingTask.promise;
 
         // Compute available width once for all merged pages
@@ -1237,6 +1306,8 @@ function collectSaveState() {
     for (const item of imageItems) {
         item.finalPageIndex = indexOfCanvas(item.canvas);
         item.originPageIndex = indexOfCanvas(item.originCanvas || item.canvas);
+        const transform=item.canvas?.parentElement?.dataset.viewportTransform;
+        item.targetViewportTransform=transform?JSON.parse(transform):[item.scale,0,0,-item.scale,0,layoutHeight(item.canvas)];
     }
     for (const stroke of drawnStrokes) {
         const c = stroke.pageContainer;
@@ -1260,9 +1331,13 @@ function collectSaveState() {
     return pageOrder;
 }
 
-saveBtn.addEventListener('click', () => {
+saveBtn.addEventListener('click', async () => {
+    if (saveBtn.disabled) return;
     const pageOrder = collectSaveState();
-    savePDF(pdfBytes, textItems, imageItems, pageOrder, drawnStrokes, originalFileName);
+    saveBtn.disabled = true;
+    saveBtn.setAttribute('aria-busy', 'true');
+    try { await savePDF(pdfBytes, textItems, imageItems, pageOrder, drawnStrokes, originalFileName); }
+    finally { saveBtn.disabled = false; saveBtn.removeAttribute('aria-busy'); }
 });
 
 // ============================================
@@ -1272,4 +1347,38 @@ document.getElementById('deletePageBtn').addEventListener('click', () => {
     if (!pdfBytes) return;
     const { index } = currentPageContainer();
     if (index >= 0) deletePage(index);
+});
+
+
+// Font fidelity is checked while editing, before a download is requested.
+const editNotice=document.createElement('div');
+editNotice.id='editNotice';editNotice.className='edit-notice';editNotice.setAttribute('role','status');editNotice.hidden=true;
+pdfTools.after(editNotice);
+let noticeVersion=0,noticeTimer;
+document.addEventListener('text-edit-status',({detail:item})=>{
+    const version=++noticeVersion;clearTimeout(noticeTimer);
+    if(!item||item.deleted){editNotice.hidden=true;return;}
+    const currentText=item.element.isContentEditable?item.element.innerText:item.currentText;
+    editNotice.hidden=false;editNotice.textContent='Checking font…';
+    noticeTimer=setTimeout(async()=>{
+        try{
+            const source=pdfBytes,order=collectSaveState();
+            const [report]=await inspectTextFonts(source,[{...item,currentText}],order);
+            if(version!==noticeVersion||source!==pdfBytes||!report)return;
+            let message=report.unrenderable.length?`Cannot export these characters: ${report.unrenderable.join(' ')}. Choose another text or font.`:
+                report.substitution?`Font substitution needed: ${report.font}. Missing characters: ${report.missing.join(' ')||'original encoding unavailable'}.`:
+                report.original?`Original font available: ${report.font}.`:'Selected font is available.';
+            if(item.nativePreview&&item.element.isContentEditable&&!report.substitution)message+=' Exact appearance is shown after applying this edit.';
+            const rect=item.element.getBoundingClientRect(),pageBounds=item.canvas.getBoundingClientRect();
+            const zoom=pageBounds.width/layoutWidth(item.canvas);
+            const bounds={left:rect.left,top:rect.top,right:Math.max(rect.right,rect.left+item.element.scrollWidth*zoom),bottom:Math.max(rect.bottom,rect.top+item.element.scrollHeight*zoom)};
+            const overlap=textItems.some(other=>other!==item&&!other.deleted&&other.canvas===item.canvas&&other.originalText.trim()&&(()=>{
+                const b=other.element.getBoundingClientRect();return bounds.left<b.right-2&&bounds.right>b.left+2&&bounds.top<b.bottom-2&&bounds.bottom>b.top+2;
+            })());
+            const overflow=bounds.right>pageBounds.right+2||bounds.bottom>pageBounds.bottom+2;
+            if(overlap||overflow)message+=' Text overlaps neighbouring content or extends beyond the page. Shorten it, insert line breaks or move it.';
+            editNotice.dataset.warning=String(!!(report.substitution||report.unrenderable.length||overlap||overflow));
+            editNotice.textContent=message;
+        }catch{if(version===noticeVersion)editNotice.textContent='Font compatibility will be checked before saving.';}
+    },300);
 });

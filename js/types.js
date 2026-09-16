@@ -56,6 +56,9 @@
  * @property {number} width - Original text width in PDF points
  * @property {number} height - Original text height in PDF points
  * @property {string} fontName - PDF.js internal font name (e.g. "g_d0_f1")
+ * @property {string} sourceFontName - Original PostScript font name (not a PDF.js counter)
+ * @property {string} loadedFontName - Browser font face loaded by PDF.js
+ * @property {number[]} viewportTransform - Original PDF-to-canvas transform
  * @property {string} fontFamily - Detected CSS font family
  * @property {string} fontWeight - Detected weight ('400', '700', etc.)
  * @property {string} fontStyle - Detected style ('normal' or 'italic')
@@ -65,7 +68,7 @@
  * @property {RGBColor} textColor - Sampled text color
  * @property {number} moveOffsetX - Accumulated drag offset in screen pixels
  * @property {number} moveOffsetY - Accumulated drag offset in screen pixels
- * @property {boolean} originalCovered - Whether the original position has been covered on canvas
+ * @property {boolean} originalCovered - Whether original text is omitted from the rendered page background
  * @property {number} cssLeft - Left position in canvas pixels
  * @property {number} cssTop - Top position in canvas pixels
  * @property {HTMLCanvasElement} canvas - Canvas of the page the item is currently on (changes on cross-page drag)

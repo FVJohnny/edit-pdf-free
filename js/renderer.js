@@ -10,6 +10,8 @@
  * Coordinates: all cssLeft/cssTop/cssWidth/cssHeight values are in canvas pixels
  * (PDF points * viewport.scale). See js/types.js for coordinate system docs.
  */
+import {registerPage, resetPageRendering, rerenderVisiblePages} from './viewport-renderer.js';
+export {setPagePreviewDocument} from './viewport-renderer.js';
 import { showFormatToolbar, repositionToolbar } from './toolbar.js';
 import { showImageToolbar, repositionImageToolbar, coverOriginalImage } from './image-toolbar.js';
 import { makeEditable } from './editor.js';
@@ -27,7 +29,7 @@ function clamp(value, min, max) {
  * How to re-render each page container's canvas backing (for sharp zoom):
  * container → { kind: 'pdf'|'merged', doc, pageNum } or { kind: 'blank' }.
  */
-const pageRenderSources = new WeakMap();
+
 
 /** Set a canvas's layout size (CSS px) and backing resolution in one go. */
 function sizeCanvas(canvas, layoutW, layoutH, resolution = 1) {
@@ -41,6 +43,7 @@ function sizeCanvas(canvas, layoutW, layoutH, resolution = 1) {
 // Render PDF pages
 // ============================================
 export async function renderPDF(pdfDoc, pdfViewer, textItems, imageItems) {
+    await resetPageRendering();
     pdfViewer.innerHTML = '';
     textItems.length = 0;
     imageItems.length = 0;
@@ -60,29 +63,31 @@ export async function renderPDF(pdfDoc, pdfViewer, textItems, imageItems) {
 
         const canvas = document.createElement('canvas');
         canvas.getContext('2d', { willReadFrequently: true });
-        sizeCanvas(canvas, viewport.width, viewport.height);
+        sizeCanvas(canvas, viewport.width, viewport.height, Math.min(1, Math.sqrt(16e6 / (pdfDoc.numPages * viewport.width * viewport.height)), 4096 / viewport.height));
         canvas.className = 'pdf-page';
 
-        await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+        await page.render({ canvasContext: canvas.getContext('2d'), viewport: page.getViewport({scale: scale * canvas.width / viewport.width}) }).promise;
 
         const textContent = await page.getTextContent();
+        const sourceEncodings = await readSourceEncodings(page);
 
         // Page container holds the canvas and the overlay text layer
         const pageContainer = document.createElement('div');
         pageContainer.style.position = 'relative';
         pageContainer.style.marginBottom = '20px';
+        pageContainer.dataset.viewportTransform = JSON.stringify(viewport.transform);
         pageContainer.dataset.pdfWidth = String(unscaledViewport.width);
         pageContainer.dataset.pdfHeight = String(unscaledViewport.height);
         // 0-based index into the ORIGINAL document — survives page reordering
         pageContainer.dataset.originalPageIndex = String(pageNum - 1);
         pageContainer.appendChild(canvas);
-        pageRenderSources.set(pageContainer, { kind: 'pdf', doc: pdfDoc, pageNum });
+        registerPage(pageContainer, { kind: 'pdf', doc: pdfDoc, pageNum });
 
         const textLayerDiv = createTextLayerDiv(viewport);
 
         const pageTextItems = [];
         textContent.items.forEach((item, index) => {
-            pageTextItems.push(createTextItem(item, index, pageNum, viewport, canvas, textContent, page));
+            pageTextItems.push(createTextItem(item, index, pageNum, viewport, canvas, textContent, page, sourceEncodings));
         });
 
         const mergedItems = mergeAdjacentTextItems(pageTextItems);
@@ -111,18 +116,19 @@ export async function renderMergedPage(pdfJsDoc, pageNum, availableWidth) {
     const viewport = page.getViewport({ scale });
 
     const canvas = document.createElement('canvas');
-    sizeCanvas(canvas, viewport.width, viewport.height);
+    sizeCanvas(canvas, viewport.width, viewport.height, Math.min(1, Math.sqrt(2e6 / (viewport.width * viewport.height)), 4096 / viewport.height));
     canvas.className = 'pdf-page';
-    await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+    await page.render({ canvasContext: canvas.getContext('2d'), viewport: page.getViewport({scale: scale * canvas.width / viewport.width}) }).promise;
 
     const container = document.createElement('div');
     container.style.position = 'relative';
     container.style.marginBottom = '20px';
     container.dataset.mergedPage = 'true';
+    container.dataset.viewportTransform=JSON.stringify(viewport.transform);
     container.dataset.pdfWidth = String(unscaledViewport.width);
     container.dataset.pdfHeight = String(unscaledViewport.height);
     container.appendChild(canvas);
-    pageRenderSources.set(container, { kind: 'merged', doc: pdfJsDoc, pageNum });
+    registerPage(container, { kind: 'merged', doc: pdfJsDoc, pageNum });
 
     const textLayer = document.createElement('div');
     textLayer.className = 'custom-text-layer';
@@ -149,13 +155,13 @@ export function createBlankPageContainer(width, height) {
     container.dataset.blankPage = 'true';
 
     const canvas = document.createElement('canvas');
-    sizeCanvas(canvas, width, height);
+    sizeCanvas(canvas, width, height, Math.min(1,Math.sqrt(2e6/(width*height)),4096/height));
     canvas.className = 'pdf-page';
     const ctx = canvas.getContext('2d');
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     container.appendChild(canvas);
-    pageRenderSources.set(container, { kind: 'blank' });
+    registerPage(container, { kind: 'blank' });
 
     const textLayer = document.createElement('div');
     textLayer.className = 'custom-text-layer';
@@ -174,61 +180,8 @@ export function createBlankPageContainer(width, height) {
 // Zoom re-render — sharp pages at any zoom level
 // ============================================
 
-let rerenderVersion = 0;
-const MAX_BACKING_RESOLUTION = 3;
-const MAX_BACKING_PIXELS = 12e6; // per page, keeps memory bounded
-
-/**
- * Re-render every page's canvas backing at the given resolution (canvas px per
- * layout px). Layout size — and every item coordinate — stays unchanged; only
- * the backing store gets denser, so zoomed pages render sharp.
- * Calls afterPage(container, canvas) after each page (used to replay covers).
- * A newer call cancels the remaining work of an older one.
- */
-export async function rerenderAllPages(pdfViewer, resolution, afterPage) {
-    const version = ++rerenderVersion;
-    const containers = pdfViewer.querySelectorAll(':scope > div');
-    for (const container of containers) {
-        if (version !== rerenderVersion) return;
-        const canvas = container.querySelector('canvas.pdf-page') || container.querySelector('canvas');
-        const source = pageRenderSources.get(container);
-        if (!canvas || !source) continue;
-
-        const layoutW = layoutWidth(canvas);
-        const layoutH = layoutHeight(canvas);
-        let res = clamp(resolution, 1, MAX_BACKING_RESOLUTION);
-        if (layoutW * layoutH * res * res > MAX_BACKING_PIXELS) {
-            res = Math.max(1, Math.sqrt(MAX_BACKING_PIXELS / (layoutW * layoutH)));
-        }
-        // Already at this resolution — skip
-        if (Math.abs(canvas.width - Math.round(layoutW * res)) <= 1) continue;
-
-        if (source.kind === 'blank') {
-            sizeCanvas(canvas, layoutW, layoutH, res);
-            const ctx = canvas.getContext('2d');
-            ctx.fillStyle = '#ffffff';
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
-        } else {
-            try {
-                const page = await source.doc.getPage(source.pageNum);
-                if (version !== rerenderVersion) return;
-                // Render to an offscreen canvas first so the visible page never flashes empty
-                const off = document.createElement('canvas');
-                const scale = (layoutW * res) / page.getViewport({ scale: 1 }).width;
-                const viewport = page.getViewport({ scale });
-                off.width = viewport.width;
-                off.height = viewport.height;
-                await page.render({ canvasContext: off.getContext('2d'), viewport }).promise;
-                if (version !== rerenderVersion) return;
-                sizeCanvas(canvas, layoutW, layoutH, res);
-                canvas.getContext('2d').drawImage(off, 0, 0, canvas.width, canvas.height);
-            } catch (_) {
-                continue; // e.g. destroyed doc — leave the current backing as is
-            }
-        }
-        if (afterPage) afterPage(container, canvas);
-    }
-}
+/** Retained public name; high-resolution work now covers visible regions only. */
+export const rerenderAllPages = rerenderVisiblePages;
 
 function createTextLayerDiv(viewport) {
     const div = document.createElement('div');
@@ -246,7 +199,29 @@ function createTextLayerDiv(viewport) {
  * Create a text item data object and its DOM span from a PDF text content item.
  * @returns {TextItem} see js/types.js
  */
-function createTextItem(item, index, pageNum, viewport, canvas, textContent, page) {
+async function readSourceEncodings(page) {
+    const ops = await page.getOperatorList();
+    const maps = {}, stack = [];
+    let font;
+    const O = pdfjsLib.OPS;
+    for (let i=0; i<ops.fnArray.length; i++) {
+        const op=ops.fnArray[i], args=ops.argsArray[i];
+        if (op===O.save) stack.push(font);
+        else if(op===O.restore) font=stack.pop();
+        else if(op===O.setFont) font=args[0];
+        else if((op===O.showText || op===O.showSpacedText || op===O.nextLineShowText || op===O.nextLineSetSpacingShowText) && font) {
+            const glyphs=args.find(a=>Array.isArray(a)) || [];
+            const map=maps[font] ||= {};
+            for(const glyph of glyphs) {
+                if(typeof glyph !== 'object' || !glyph?.unicode || !Number.isInteger(glyph.originalCharCode)) continue;
+                map[glyph.unicode]=glyph.originalCharCode;
+            }
+        }
+    }
+    return maps;
+}
+
+function createTextItem(item, index, pageNum, viewport, canvas, textContent, page, sourceEncodings) {
     // Transform the item's PDF coordinates into canvas pixel coordinates
     const coords = pdfjsLib.Util.transform(viewport.transform, item.transform);
     const canvasX = coords[4];
@@ -257,7 +232,7 @@ function createTextItem(item, index, pageNum, viewport, canvas, textContent, pag
     const renderedFontSize = pdfFontSize * viewport.scale;
     const renderedWidth = item.width * viewport.scale;
 
-    const { fontFamily, fontWeight, fontStyle } = detectFont(item, textContent, page);
+    const { fontFamily, fontWeight, fontStyle, sourceFontName, loadedFontName, nativePreview } = detectFont(item, textContent, page);
     const bgColor = sampleBgColor(canvas, canvasX, canvasY, renderedWidth);
     const textColor = sampleTextColor(canvas, coords, renderedWidth, renderedFontSize, item.str);
 
@@ -273,13 +248,15 @@ function createTextItem(item, index, pageNum, viewport, canvas, textContent, pag
     span.style.top = cssTop + 'px';
     span.style.fontSize = renderedFontSize + 'px';
     span.style.lineHeight = '1';
-    span.style.fontFamily = fontFamily;
+    span.style.fontFamily = loadedFontName ? `'${loadedFontName}', ${fontFamily}` : fontFamily;
     span.style.fontWeight = fontWeight;
     if (fontStyle === 'italic') span.style.fontStyle = 'italic';
-    span.style.transformOrigin = 'left bottom';
+    span.style.transformOrigin = `0 ${renderedFontSize * FONT_BASELINE_RATIO}px`;
+    span.style.transform = `matrix(${coords[0]/renderedFontSize},${coords[1]/renderedFontSize},${-coords[2]/renderedFontSize},${-coords[3]/renderedFontSize},0,0)`;
+    span.style.fontSynthesis = 'none';
     span.style.pointerEvents = 'auto';
     // Tight letter-spacing and subpixel rendering to match PDF appearance
-    span.style.letterSpacing = '-0.02em';
+    span.style.letterSpacing = '0';
     span.style.textRendering = 'geometricPrecision';
     span.style.webkitFontSmoothing = 'antialiased';
     span.style.mozOsxFontSmoothing = 'grayscale';
@@ -293,10 +270,12 @@ function createTextItem(item, index, pageNum, viewport, canvas, textContent, pag
         currentText: item.str,
         index,
         transform: item.transform,
+        viewportTransform: [...viewport.transform],
         width: item.width,
         height: item.height,
         fontName: item.fontName,
-        fontFamily, fontWeight, fontStyle,
+        sourceGlyphs: sourceEncodings[item.fontName],
+        fontFamily, fontWeight, fontStyle, sourceFontName, loadedFontName, nativePreview,
         scale: viewport.scale,
         originalWidth: renderedWidth,
         bgColor, textColor,
@@ -326,25 +305,27 @@ function createTextItem(item, index, pageNum, viewport, canvas, textContent, pag
 function sameTextColor(a, b) {
     const ca = a.textColor, cb = b.textColor;
     if (!ca || !cb) return true;
-    // Treat both as "dark" if their luminance is low — anti-aliased dark grays
-    // and pure black should merge.
-    const lum = (c) => c.r * 0.299 + c.g * 0.587 + c.b * 0.114;
-    if (lum(ca) < 0.35 && lum(cb) < 0.35) return true;
-    return Math.abs(ca.r - cb.r) < 0.25 &&
-           Math.abs(ca.g - cb.g) < 0.25 &&
-           Math.abs(ca.b - cb.b) < 0.25;
+    return Math.abs(ca.r - cb.r) < 0.04 &&
+           Math.abs(ca.g - cb.g) < 0.04 &&
+           Math.abs(ca.b - cb.b) < 0.04;
+}
+
+function sameTextStyle(a, b) {
+    return a.fontName === b.fontName && Math.abs(a.renderedFontSize-b.renderedFontSize) < 0.1 &&
+        Math.abs(Math.atan2(a.transform[1],a.transform[0])-Math.atan2(b.transform[1],b.transform[0])) < 0.001;
 }
 
 function mergeAdjacentTextItems(items) {
     if (items.length <= 1) return items;
 
     // Sort by Y position (top), then X position (left)
-    const sorted = [...items].sort((a, b) => {
+    const sorted = items.filter(item=>item.originalText.length).sort((a, b) => {
         const yDiff = a.cssTop - b.cssTop;
         if (Math.abs(yDiff) > 5) return yDiff;
         return a.cssLeft - b.cssLeft;
     });
 
+    if(!sorted.length)return [];
     // Pass 1: Merge items on the same line
     const lines = [];
     let current = sorted[0];
@@ -362,8 +343,7 @@ function mergeAdjacentTextItems(items) {
         const maxGap = Math.max(current.renderedFontSize, next.renderedFontSize) * 0.5;
         const adjacent = gap >= -2 && gap < maxGap;
 
-        if (sameBaseline && adjacent && sameTextColor(current, next) &&
-            current.originalText.trim() !== '' && next.originalText.trim() !== '') {
+        if (sameBaseline && adjacent && sameTextStyle(current, next) && (sameTextColor(current,next)||!next.originalText.trim()||!current.originalText.trim())) {
             current = mergeInline(current, next);
         } else {
             lines.push(current);
@@ -378,57 +358,33 @@ function mergeAdjacentTextItems(items) {
     // Within a paragraph: baseline distance ≈ 1.1–1.3x font size (normal line spacing)
     // Paragraph break: baseline distance ≈ 1.6x+ font size (extra gap)
     const paragraphs = [];
-    current = lines[0];
-    let lastBaselineDist = null;
-
-    for (let i = 1; i < lines.length; i++) {
-        const nextLine = lines[i];
-
-        // Similar font size (within 20%)
-        const similarSize = Math.abs(current.renderedFontSize - nextLine.renderedFontSize) <
-            current.renderedFontSize * 0.2;
-
-        // Similar left edge (within 1 font size)
-        const similarLeft = Math.abs(current.cssLeft - nextLine.cssLeft) < current.renderedFontSize;
-
-        // Baseline-to-baseline distance: from the last line's baseline to next line's baseline
-        // For single-line items: baseline = cssTop + renderedFontSize
-        // For merged items: use lastBaselineY which tracks the bottom-most line's baseline
-        const currentBaseline = current.lastBaselineY ?? (current.cssTop + current.renderedFontSize);
-        const nextBaseline = nextLine.cssTop + nextLine.renderedFontSize;
-        const baselineDist = nextBaseline - currentBaseline;
-
-        // Normal line spacing is 1.1–1.4x font size. Paragraph breaks are 1.6x+.
-        const fontSize = Math.max(current.renderedFontSize, nextLine.renderedFontSize);
-        const normalSpacing = baselineDist > 0 && baselineDist < fontSize * 1.5;
-
-        // Consistency check: if we've seen within-paragraph spacing, reject
-        // distances that are 25%+ larger (indicates a paragraph break)
-        let consistent = true;
-        if (lastBaselineDist !== null && baselineDist > lastBaselineDist * 1.25 + 1) {
-            consistent = false;
+    for (const nextLine of lines) {
+        // Find the preceding line in this column, even when another column
+        // occurs between them in the PDF's drawing order.
+        let candidate=-1,nearest=Infinity;
+        for(let i=0;i<paragraphs.length;i++){
+            const prev=paragraphs[i],fontSize=prev.renderedFontSize;
+            const distance=nextLine.cssTop+nextLine.renderedFontSize-(prev.lastBaselineY??prev.cssTop+fontSize);
+            if(distance<=fontSize*.5||distance>=fontSize*1.5||distance>=nearest)continue;
+            if(Math.abs(prev.cssLeft-nextLine.cssLeft)>=fontSize*.5||!sameTextStyle(prev,nextLine)||!sameTextColor(prev,nextLine))continue;
+            if(!prev.originalText.trim()||!nextLine.originalText.trim())continue;
+            if(prev.lineHeight&&Math.abs(distance-prev.lineHeight)>fontSize*.15)continue;
+            // Do not join through a differently styled intervening line.
+            if(lines.some(line=>line!==nextLine&&line.cssTop>prev.cssTop&&line.cssTop<nextLine.cssTop-fontSize*.5&&Math.abs(line.cssLeft-nextLine.cssLeft)<fontSize*.5&&line.cssTop>=(prev.lastBaselineY??prev.cssTop+fontSize)))continue;
+            candidate=i;nearest=distance;
         }
-
-        const bothNonEmpty = current.originalText.trim() !== '' && nextLine.originalText.trim() !== '';
-
-        if (similarSize && similarLeft && normalSpacing && consistent && bothNonEmpty &&
-            sameTextColor(current, nextLine)) {
-            if (lastBaselineDist === null) lastBaselineDist = baselineDist;
-            current = mergeLines(current, nextLine);
-        } else {
-            paragraphs.push(current);
-            current = nextLine;
-            lastBaselineDist = null;
-        }
+        if(candidate<0)paragraphs.push(nextLine);
+        else paragraphs[candidate]=mergeLines(paragraphs[candidate],nextLine);
     }
-    paragraphs.push(current);
 
     return paragraphs;
 }
 
 /** Merge two horizontally adjacent items on the same line. */
 function mergeInline(a, b) {
-    const mergedText = a.originalText + b.originalText;
+    const gap=b.cssLeft-(a.cssLeft+a.originalWidth);
+    const separator=gap>a.renderedFontSize*.15&&!/\s$/.test(a.originalText)&&!/^\s/.test(b.originalText)?' ':'';
+    const mergedText = a.originalText + separator + b.originalText;
     const mergedRight = Math.max(a.cssLeft + a.originalWidth, b.cssLeft + b.originalWidth);
     const mergedWidth = mergedRight - a.cssLeft;
     const fontSize = Math.max(a.renderedFontSize, b.renderedFontSize);
@@ -473,7 +429,9 @@ function mergeLines(a, b) {
     a.element.style.fontSize = fontSize + 'px';
     a.element.style.left = mergedLeft + 'px';
     a.element.style.top = mergedTop + 'px';
-    a.element.style.whiteSpace = 'pre-wrap';
+    a.element.style.whiteSpace = 'pre';
+    const lineHeight=(b.cssTop-a.cssTop)/a.originalText.split('\n').length;
+    a.element.style.lineHeight=lineHeight+'px';
     a.element.style.width = mergedWidth + 'px';
 
     if (b.element.parentNode) b.element.parentNode.removeChild(b.element);
@@ -490,6 +448,7 @@ function mergeLines(a, b) {
         cssLeft: mergedLeft,
         cssTop: mergedTop,
         mergedHeight,
+        lineHeight,
         lastBaselineY: b.cssTop + b.renderedFontSize,
         subItems,
     };
@@ -499,6 +458,7 @@ function mergeLines(a, b) {
 // Font detection — map PDF font names to CSS font families
 // ============================================
 function detectFont(item, textContent, page) {
+    let nativePreview=false;
     let fontFamily = 'Calibri, Arial, Helvetica, sans-serif';
     let fontWeight = '400';
     let fontStyle = 'normal';
@@ -507,9 +467,12 @@ function detectFont(item, textContent, page) {
 
     // Try to get the actual font name from the PDF font object
     let resolvedName = '';
+    let sourceFontName = '', loadedFontName = '';
     try {
         const fontObj = page.commonObjs.get(item.fontName);
-        if (fontObj?.name) resolvedName = fontObj.name.toLowerCase();
+        nativePreview=!!fontObj?.isType3Font;
+        if (fontObj?.name) { sourceFontName = fontObj.name; resolvedName = fontObj.name.toLowerCase(); }
+        if (fontObj?.loadedName && !fontObj?.missingFile) loadedFontName = fontObj.loadedName;
     } catch (_) {}
 
     const nameToCheck = resolvedName || fontName;
@@ -557,7 +520,7 @@ function detectFont(item, textContent, page) {
         fontStyle = 'italic';
     }
 
-    return { fontFamily, fontWeight, fontStyle };
+    return { fontFamily, fontWeight, fontStyle, sourceFontName, loadedFontName, nativePreview };
 }
 
 // ============================================
@@ -575,6 +538,7 @@ async function extractImages(page, viewport, canvas, textLayerDiv, imageItems, p
 
     // CTM stack tracks coordinate transforms as PDF.js processes draw operations
     const matrixStack = [viewport.transform.slice()];
+    const alphaStack=[1];
 
     function currentMatrix() {
         return matrixStack[matrixStack.length - 1];
@@ -600,24 +564,34 @@ async function extractImages(page, viewport, canvas, textLayerDiv, imageItems, p
 
         if (op === OPS.save) {
             matrixStack.push(currentMatrix().slice());
+            alphaStack.push(alphaStack.at(-1));
         } else if (op === OPS.restore) {
-            if (matrixStack.length > 1) matrixStack.pop();
+            if (matrixStack.length > 1) {matrixStack.pop();alphaStack.pop();}
+        } else if(op === OPS.setGState){
+            for(const [key,value] of operands[0])if(key==='ca')alphaStack[alphaStack.length-1]=value;
         } else if (op === OPS.transform) {
             matrixStack[matrixStack.length - 1] = multiply(currentMatrix(), operands);
+        } else if (op === OPS.paintFormXObjectBegin) {
+            matrixStack.push(operands[0]?multiply(currentMatrix(),operands[0]):currentMatrix().slice());
+            alphaStack.push(alphaStack.at(-1));
+        } else if (op === OPS.paintFormXObjectEnd) {
+            if(matrixStack.length>1){matrixStack.pop();alphaStack.pop();}
         } else if (op === OPS.paintImageXObject || op === OPS.paintImageXObjectRepeat) {
-            const matrix = currentMatrix();
+            const placements=op===OPS.paintImageXObjectRepeat?Array.from({length:operands[3].length/2},(_,j)=>multiply(currentMatrix(),[operands[1],0,0,operands[2],operands[3][j*2],operands[3][j*2+1]])):[currentMatrix()];
+            for(const matrix of placements){
             // Image dimensions come from the CTM: width = magnitude of [a, b], height = magnitude of [c, d]
-            const imgWidth = Math.sqrt(matrix[0] ** 2 + matrix[1] ** 2);
-            const imgHeight = Math.sqrt(matrix[2] ** 2 + matrix[3] ** 2);
+            const imgWidth = Math.abs(matrix[0])+Math.abs(matrix[2]);
+            const imgHeight = Math.abs(matrix[1])+Math.abs(matrix[3]);
 
             if (imgWidth < MIN_IMAGE_SIZE || imgHeight < MIN_IMAGE_SIZE) continue;
 
             // CTM[4], CTM[5] is the bottom-left corner in canvas coords.
             // CSS top = y - height (since canvas Y goes downward).
-            const cssLeft = matrix[4];
-            const cssTop = matrix[5] - imgHeight;
+            const corners=[[0,0],[1,0],[0,1],[1,1]].map(p=>[matrix[0]*p[0]+matrix[2]*p[1]+matrix[4],matrix[1]*p[0]+matrix[3]*p[1]+matrix[5]]);
+            const cssLeft = Math.min(...corners.map(p=>p[0]));
+            const cssTop = Math.min(...corners.map(p=>p[1]));
             const bgColor = sampleImageBgColor(canvas, cssLeft, cssTop, imgWidth);
-            const imageDataURL = captureCanvasRegion(canvas, cssLeft, cssTop, imgWidth, imgHeight);
+            const imageDataURL = isolatedImagePreview(page,operands[0],matrix,cssLeft,cssTop,imgWidth,imgHeight) || captureCanvasRegion(canvas, cssLeft, cssTop, imgWidth, imgHeight);
 
             const overlay = document.createElement('div');
             overlay.className = 'draggable-image';
@@ -627,6 +601,7 @@ async function extractImages(page, viewport, canvas, textLayerDiv, imageItems, p
             overlay.style.width = imgWidth + 'px';
             overlay.style.height = imgHeight + 'px';
             overlay.style.pointerEvents = 'auto';
+            overlay.style.opacity=String(alphaStack.at(-1));
             if (imageDataURL) {
                 overlay.style.backgroundImage = `url(${imageDataURL})`;
                 overlay.style.backgroundSize = '100% 100%';
@@ -640,6 +615,8 @@ async function extractImages(page, viewport, canvas, textLayerDiv, imageItems, p
                 type: 'image',
                 imageName: operands[0],
                 imageSeqIndex: imageSeqIndex++,
+                imageTransform: pdfjsLib.Util.transform(pdfjsLib.Util.inverseTransform(viewport.transform),matrix),
+                viewportTransform: [...viewport.transform],
                 scale: viewport.scale,
                 cssLeft, cssTop,
                 cssWidth: imgWidth,
@@ -656,8 +633,30 @@ async function extractImages(page, viewport, canvas, textLayerDiv, imageItems, p
             imageItems.push(imageItemData);
             setupImageDrag(overlay, imageItemData, canvas);
             textLayerDiv.appendChild(overlay);
+            }
         }
     }
+}
+
+/** Decode just the image, including alpha, instead of capturing artwork behind it. */
+function isolatedImagePreview(page,name,matrix,left,top,width,height){
+    try{
+        const image=(name.startsWith('g_')?page.commonObjs:page.objs).get(name);
+        if(!image)return '';
+        const raw=document.createElement('canvas');raw.width=image.width;raw.height=image.height;
+        const context=raw.getContext('2d');
+        if(image.bitmap)context.drawImage(image.bitmap,0,0);
+        else{
+            const rgba=new Uint8ClampedArray(image.width*image.height*4),data=image.data;
+            if(image.kind===pdfjsLib.ImageKind.RGBA_32BPP)rgba.set(data);
+            else if(image.kind===pdfjsLib.ImageKind.RGB_24BPP){for(let i=0,j=0;i<data.length;i+=3,j+=4){rgba.set(data.subarray(i,i+3),j);rgba[j+3]=255;}}
+            else return '';
+            context.putImageData(new ImageData(rgba,image.width,image.height),0,0);
+        }
+        const out=document.createElement('canvas');out.width=Math.ceil(width);out.height=Math.ceil(height);
+        const ctx=out.getContext('2d');ctx.setTransform(matrix[0]/image.width,matrix[1]/image.width,-matrix[2]/image.height,-matrix[3]/image.height,matrix[4]+matrix[2]-left,matrix[5]+matrix[3]-top);ctx.drawImage(raw,0,0);
+        return out.toDataURL();
+    }catch{return '';}
 }
 
 // ============================================
@@ -690,6 +689,7 @@ function crossPageIfNeeded(element, item, e) {
     const targetCanvas = target.querySelector('canvas');
     if (!layer || !targetCanvas) return curCanvas;
     layer.appendChild(element);
+    if(e.buttons)element.setPointerCapture(e.pointerId);
     item.canvas = targetCanvas;
     return targetCanvas;
 }
@@ -837,6 +837,7 @@ export function setupImageDrag(overlay, imageItemData, canvas) {
             return;
         }
 
+        overlay.setPointerCapture(e.pointerId);
         const group = makeGroupDrag(imageItemData);
         const imgW = parseFloat(overlay.style.width);
         const imgH = parseFloat(overlay.style.height);
@@ -1098,6 +1099,7 @@ export function setupTextDrag(span, textItemData, canvas) {
             return;
         }
 
+        span.setPointerCapture(e.pointerId);
         const group = makeGroupDrag(textItemData);
         const spanRect = span.getBoundingClientRect();
         const startCanvas = textItemData.canvas;
@@ -1131,6 +1133,7 @@ export function setupTextDrag(span, textItemData, canvas) {
             if (!dragState.hasMoved && Math.abs(dx) + Math.abs(dy) > DRAG_THRESHOLD) {
                 dragState.hasMoved = true;
                 span.classList.add('dragging');
+                if(textItemData.nativePreview){span.removeAttribute('data-native-preview');document.dispatchEvent(new Event('text-background-change'));}
                 showFormatToolbar(textItemData);
                 coverOriginalText(textItemData, dragState.spanWidth);
                 if (group.active) group.onCoverStart();

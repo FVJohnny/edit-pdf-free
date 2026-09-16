@@ -3,6 +3,7 @@
    ============================================ */
 
 .toast {
+    pointer-events: none;
     position: fixed;
     bottom: 40px;
     left: 50%;

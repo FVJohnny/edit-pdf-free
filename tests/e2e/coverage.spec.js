@@ -24,7 +24,7 @@ test.describe('Coverage gaps', () => {
             const p1 = v.querySelector(':scope > div');
             v.scrollTop = p1.offsetTop + p1.offsetHeight - v.clientHeight / 2;
         });
-        await page.waitForTimeout(200);
+        await settle(page);
         // pick a page-1 text currently visible in the top half of the viewer
         const span = await page.evaluateHandle(() => {
             const v = document.querySelector('.pdf-viewer');
@@ -82,10 +82,13 @@ test.describe('Coverage gaps', () => {
             const c = document.querySelector('canvas.pdf-page');
             return c.getBoundingClientRect().width / c.getBoundingClientRect().height;
         });
-        await page.hover('.pdf-minimap-page');
-        await page.locator('.pdf-minimap-page').first().locator('.minimap-rotate').click({ force: true });
+        await canvasPoint(page,.5,.25);
+        const thumb=await page.locator('.pdf-minimap-page').first().boundingBox();
+        await page.mouse.move(thumb.x+thumb.width/2,thumb.y+thumb.height/2);
+        await page.locator('.pdf-minimap-page').first().locator('.minimap-rotate').click();
         await expect.poll(async () => page.evaluate(() => {
             const c = document.querySelector('canvas.pdf-page');
+            if (!c) return 0; // rotation reloads the page before its render completes
             const r = c.getBoundingClientRect();
             return r.width / r.height;
         }), { timeout: 20000 }).toBeGreaterThan(1 / before * 0.9);
@@ -103,12 +106,14 @@ test.describe('Coverage gaps', () => {
     test('sharp zoom: the canvas backing re-renders denser after zooming in', async ({ page }) => {
         await loadFixture(page);
         const ratioAt = () => page.evaluate(() => {
-            const c = document.querySelector('canvas.pdf-page');
-            return c.width / parseFloat(c.style.width);
+            const c = document.querySelector('canvas.pdf-detail');
+            return c?c.width / parseFloat(c.style.width):0;
         });
+        await expect.poll(ratioAt).toBeGreaterThan(0);
         const base = await ratioAt();
         for (let i = 0; i < 5; i++) await page.click('#zoomInBtn'); // 150%
         await expect(page.locator('#zoomLabel')).toHaveText('150%');
+        await page.locator('.pdf-viewer').scrollIntoViewIfNeeded();await settle(page);
         await expect.poll(ratioAt, { timeout: 10000 }).toBeGreaterThan(base * 1.2);
     });
 

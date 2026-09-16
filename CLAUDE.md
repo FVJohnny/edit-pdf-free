@@ -28,7 +28,7 @@ js/
   utils/
     constants.js        — shared numeric constants (thresholds, sizes, margins)
     color.js            — RGB/hex conversion, color sampling from canvas
-    canvas.js           — cover original positions, capture canvas regions
+    canvas.js           — refresh text/image backgrounds, capture canvas regions
     floating-toolbar.js — shared floating toolbar positioning and dismiss logic
 css/
   base.css              — variables, reset, buttons, animations
@@ -92,17 +92,17 @@ Use the MCP Chrome tools (`mcp__chrome__*`) to test features in the browser. Lau
    - Verify the toolbar state (active buttons, size label, color swatch) reflects the current formatting.
 
 4. **Drag-to-move** — Drag a text item to a new position. Verify:
-   - The original position is covered (white/bg-color rect) **immediately when the drag starts**, not after dropping.
+   - For text, the preview removes the original glyphs and preserves the artwork behind them; images use the same removal engine.
    - The text moves smoothly with the cursor.
    - The format toolbar follows the text during the drag.
    - After dropping, the text stays at the new position with a dashed green outline.
 
 5. **Drag-to-move images** — Drag an image (e.g. the Accelio logo) to a new position. Verify:
    - Images in the PDF are detected and show a hover highlight (red border) when moused over.
-   - The original position is covered (white/bg-color rect) **immediately when the drag starts**.
+   - The original position is removed from the preview while preserving background artwork.
    - The image moves smoothly with the cursor, showing the captured image content.
    - After dropping, the image stays at the new position with a dashed green outline.
-   - **Resize** — Hover over an image to reveal resize handles (red corner dots, edge cursors). Drag a corner or edge to resize. Verify the image scales and the original position is covered.
+   - **Resize** — Hover over an image to reveal resize handles (red corner dots, edge cursors). Drag a corner or edge to resize. Verify the image scales and the original image occurrence is removed.
    - **Shift+Resize (aspect ratio lock)** — Hold Shift while dragging any resize handle. Verify the image maintains its original aspect ratio throughout the resize. Test with both corner and edge handles.
 
 6. **Add blank pages** — Scroll to a page in the middle of the document, click "Page Before" and "Page After". Verify:
@@ -114,9 +114,9 @@ Use the MCP Chrome tools (`mcp__chrome__*`) to test features in the browser. Lau
 
 6b. **Cross-page drag** — Drag a text item and an image from one page onto another (drag toward the viewer edge; it auto-scrolls until the target page is visible, including targets several pages away). Verify:
    - The item reparents onto the target page and stays under the cursor.
-   - For existing (extracted) items, the original position on the source page is covered.
+   - For existing (extracted) items, the original occurrence on the source page is removed while preserving its background.
    - Undo returns the item to its original page and position.
-   - In the saved PDF the item appears on the target page (for existing images this exercises copying the XObject to the target page's resources; for existing text the cover must be on the source page).
+   - In the saved PDF the item appears on the target page (for existing images this exercises copying the XObject to the target page's resources; for existing text the removal must be on the source page).
 
 6c. **Multi-image import + compression** — Select 2+ images in one Import Image dialog. A "Compress images?" modal offers High quality / Balanced / Smallest / Original. Verify:
    - All images are placed with a small cascade offset and each is independently draggable.
@@ -134,13 +134,13 @@ Use the MCP Chrome tools (`mcp__chrome__*`) to test features in the browser. Lau
 7. **Save PDF** — Click "Save PDF", enter a filename, and confirm. Intercept or download the generated PDF.
 
 8. **Verify saved PDF** — Re-load the saved PDF back into the editor (or open in a new tab). Check:
-   - **Cover rects** — The original positions of moved/edited text are cleanly covered with the correct background color. The cover rects should NOT bleed over adjacent text or graphics.
+   - **Real text removal** — Replaced/deleted text must be absent from extraction after saving. Original backgrounds, images, lines and neighbouring text must survive. Image moves remove the original occurrence and preserve its background.
    - **New text placement** — Edited and moved texts appear at their expected positions.
-   - **Font fidelity** — Text that wasn't changed in style should use the original PDF font (via CMap encoding). Text with style overrides should use the correct fallback font (Helvetica/Times/Courier family).
+   - **Font fidelity** — Edited text should reuse the original PDF font through its CMap or source character encoding. Alignment, color and opacity must retain that font. Explicit family/bold/italic changes use the requested fallback variant; unavailable original glyphs produce a notice while editing and require confirmation before saving.
    - **Font size** — Any size changes are reflected correctly in the saved PDF.
    - **Colors** — Text color overrides are preserved in the saved output.
    - **Bold/Italic** — Style overrides render correctly in the saved PDF.
-   - **Moved images** — Images that were dragged appear at their new positions in the saved PDF. The original positions are cleanly covered.
+   - **Moved images** — Images that were dragged appear at their new positions in the saved PDF. The original positions reveal their original background.
    - **Resized images** — Images that were resized appear at their new dimensions in the saved PDF.
    - **Imported photos with EXIF rotation** — Import `tests/fixtures/exif-rotated-photo.jpg` (raw pixels sideways, EXIF orientation tag 6). It must appear upright both in the editor preview AND in the saved PDF (PDF viewers ignore EXIF, so the save path must bake the rotation into the pixels).
    - **Unmodified content** — Text and images that were NOT edited should be completely unchanged — no artifacts, no cover rects, no font substitution.
@@ -168,7 +168,7 @@ Use the MCP Chrome tools (`mcp__chrome__*`) to test features in the browser. Lau
 
 6r. **Password PDFs** — Opening an encrypted PDF prompts for the password (retries on a wrong one).
 
-6s. **Sharp zoom** — Zoom to 200%: after a moment the page re-renders sharp (no CSS blur), covers stay covered, drag/resize remain accurate.
+6s. **Sharp zoom** — Zoom to 200%: after a moment the page re-renders sharp (no CSS blur), removed content stays absent and backgrounds survive; drag/resize remain accurate.
 
 ### Quick smoke test
 

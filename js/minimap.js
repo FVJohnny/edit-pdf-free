@@ -64,6 +64,7 @@ export function scheduleMinimapRebuild() {
 
 // Cache of loaded overlay background images, keyed by their (data) URL.
 const overlayImageCache = new Map();
+document.addEventListener('pdf-document-reset',()=>overlayImageCache.clear());
 
 function loadOverlayImage(url) {
     if (overlayImageCache.has(url)) return overlayImageCache.get(url);
@@ -78,15 +79,19 @@ function loadOverlayImage(url) {
 }
 
 /** Redraw all page thumbnails from the page canvases plus the DOM overlays. */
+const pageThumbnails=new WeakMap();
+let rebuildVersion=0;
 export async function rebuildMinimap() {
     if (!innerEl || !viewer) return;
-    innerEl.innerHTML = '';
-    const containers = viewer.querySelectorAll(':scope > div');
+    const version=++rebuildVersion;
+    const containers = [...viewer.querySelectorAll(':scope > div')];
+    const retained=new Set(containers.map(c=>pageThumbnails.get(c)));
+    for(const wrap of pageWraps())if(!retained.has(wrap))wrap.remove();
     const width = (minimapEl.clientWidth || 64) - 12; // minus inner padding
     for (const container of containers) {
         // A page can have several stacked canvases (page + draw overlay) —
         // composite them all into one thumbnail, in DOM order.
-        const canvases = container.querySelectorAll('canvas');
+        const canvases = container.querySelectorAll('canvas:not(.pdf-detail)');
         const base = canvases[0];
         if (!base || !base.width || !base.height) continue;
         const height = Math.max(8, Math.round(width * base.height / base.width));
@@ -101,8 +106,18 @@ export async function rebuildMinimap() {
         // Overlay positions are in layout px — scale from layout, not backing
         await drawOverlaysOnThumb(ctx, container, thumb.width / layoutWidth(base), thumb.height / layoutHeight(base));
 
-        // Wrap: drag handle (reorder) + delete button appear on hover
-        const wrap = document.createElement('div');
+        if(version!==rebuildVersion)return;
+        let wrap=pageThumbnails.get(container);
+        if(wrap){
+            wrap.querySelector('.pdf-minimap-thumb').replaceWith(thumb);
+            const position=containers.indexOf(container);
+            if(pageWraps()[position]!==wrap)innerEl.insertBefore(wrap,pageWraps()[position]||null);
+            continue;
+        }
+        // Retain interactive controls across redraws so a refresh cannot
+        // interrupt a pointer gesture or remove the hovered delete button.
+        wrap = document.createElement('div');
+        pageThumbnails.set(container,wrap);
         wrap.className = 'pdf-minimap-page';
         wrap.appendChild(thumb);
         const handle = document.createElement('button');
@@ -217,18 +232,21 @@ async function drawOverlaysOnThumb(ctx, container, sx, sy) {
     }
     for (const el of container.querySelectorAll('.draggable-image')) {
         if (el.style.display === 'none') continue;
+        if(!el.classList.contains('moved')&&!el.classList.contains('original-removed')&&!el.classList.contains('dragging'))continue;
         const match = el.style.backgroundImage?.match(/url\("?([^")]+)"?\)/);
         if (!match) continue;
         const img = await loadOverlayImage(match[1]);
         if (!img) continue;
+        ctx.save();ctx.globalAlpha=el.style.opacity===''?1:parseFloat(el.style.opacity);
         ctx.drawImage(img,
             parseFloat(el.style.left) * sx,
             parseFloat(el.style.top) * sy,
             parseFloat(el.style.width) * sx,
             parseFloat(el.style.height) * sy);
+        ctx.restore();
     }
     for (const span of container.querySelectorAll('.editable-text')) {
-        if (span.style.display === 'none') continue;
+        if (span.style.display === 'none'||span.hasAttribute('data-native-preview')) continue;
         if (!span.classList.contains('modified') && !span.classList.contains('moved')) continue;
         const fontSize = parseFloat(span.style.fontSize) * sy;
         if (!fontSize) continue;

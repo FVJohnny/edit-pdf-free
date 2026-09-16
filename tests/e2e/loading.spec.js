@@ -36,3 +36,17 @@ test.describe('Document loading', () => {
         await expect(page.locator('#sizeIndicator, .size-indicator')).toHaveText(/KB|MB/, { timeout: 10000 });
     });
 });
+
+test('saving remains disabled until document rendering is complete',async({page})=>{
+    await page.route('**/vendor/pdf.worker.min.js',async route=>{await new Promise(resolve=>setTimeout(resolve,700));await route.continue();});
+    await page.goto('/');await page.setInputFiles('#pdfInput',MAIN_PDF);
+    await expect(page.locator('#pdfViewer')).toHaveAttribute('aria-busy','true');await expect(page.locator('#saveBtn')).toBeDisabled();
+    await expect(page.locator('#pdfViewer')).toHaveAttribute('aria-busy','false');await expect(page.locator('canvas.pdf-page')).toHaveCount(4);await expect(page.locator('#saveBtn')).toBeEnabled();
+});
+
+test('Open New opens the chooser and permits selecting the same PDF again',async({page})=>{
+    const workers=[];page.on('worker',worker=>{if(worker.url().includes('pdf.worker'))workers.push(worker);});
+    await loadFixture(page);let closed=false;workers[0].on('close',()=>{closed=true;});
+    const chooser=page.waitForEvent('filechooser');await page.click('#newFileBtn');await (await chooser).setFiles(MAIN_PDF);
+    await expect(page.locator('#pdfViewer')).toHaveAttribute('aria-busy','false');await expect(page.locator('canvas.pdf-page')).toHaveCount(4);await expect(page.locator('#saveBtn')).toBeEnabled();await expect.poll(()=>closed).toBe(true);
+});

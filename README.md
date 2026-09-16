@@ -60,8 +60,12 @@ A free, browser-based PDF editor. No signup, no subscription, no watermarks. Eve
 - **Touch-friendly** — works on phones: big grab targets, no accidental scrolling while drawing, keyboard-aware floating toolbars
 
 ### Saving
-- Original positions of moved/edited content are covered with the sampled background color
-- Unchanged text keeps the original PDF font (CMap encoding); styled text falls back to Helvetica/Times/Courier
+- Existing text is removed from the page content before its replacement is written, so deleted/replaced text does not remain underneath
+- Text removal preserves background images, fills and vector lines; the preview renders the same removal with undo and zoom support
+- Original font resources are reused using PostScript names and CMap/source character encodings, including older PDFs without ToUnicode
+- Mixed fonts/sizes remain separate editable fragments. Original text color and rotated baselines are retained
+- Font compatibility is checked while editing and before export. Missing original glyphs require confirmation before substitution; unsupported characters block export instead of disappearing.
+- Original image occurrences are removed before moving/resizing/deleting; backgrounds, original image content, transparency and affine transforms are retained for supported images. Ambiguous overlaps are reported.
 - Text color and opacity, stroke colors/opacity/fill and line widths are all preserved
 - Drawings save as vector paths; signatures keep their transparency
 - Inserted, deleted and reordered pages come out exactly as arranged on screen
@@ -78,7 +82,7 @@ Opens at [http://localhost:3000](http://localhost:3000).
 ## Testing
 
 End-to-end tests (Playwright) cover every feature, plus a regression test for
-every bug ever found:
+documented bug fixes:
 
 ```bash
 npm test            # full suite (starts its own server)
@@ -96,6 +100,7 @@ npm run test:headed # watch it run
 ## Tech Stack
 
 - **PDF.js** (pdfjs-dist) — PDF rendering in the browser
+- **MuPDF.js 1.28.1** — local WebAssembly worker for real text/image removal (AGPL/commercial; see `vendor/mupdf/README.md`)
 - **pdf-lib** — PDF manipulation and saving
 - **fontkit** — font embedding support
 - **Vanilla HTML/CSS/JS** — no framework, no bundler, ES modules
@@ -107,7 +112,11 @@ npm run test:headed # watch it run
 index.html              — landing page + editor UI
 js/
   app.js                — entry point: state, file loading, image import, tools
+  pdf-loader.js         — shared font resources and PDF.js loading options
   renderer.js           — PDF rendering, text/image extraction, drag, resize
+  viewport-renderer.js  — visible-region detail rendering, cancellation and memory limits
+  document-structure.js — preserve pages, forms, links, bookmarks and catalog
+  image-removal-core.js — remove selected image occurrences in the local worker
   saver.js              — PDF save: text, images, CMap fonts, strokes, download
   toolbar.js            — text format toolbar (style, family, alignment, color)
   image-toolbar.js      — image toolbar (rotate, download, delete)
@@ -125,7 +134,7 @@ js/
     constants.js        — shared numeric constants
     color.js            — RGB/hex conversion, color sampling
     color-popover.js    — custom color + opacity picker popover
-    canvas.js           — cover original positions, capture canvas regions
+    canvas.js           — refresh original text/image backgrounds, capture regions
     floating-toolbar.js — shared toolbar positioning and dismiss logic
 css/
   base.css              — variables, reset, buttons, animations
@@ -140,3 +149,75 @@ tests/
 ## License
 
 [IDGAF](LICENSE) — do whatever you want with it.
+
+## Real text editing architecture
+
+`text-removal.js` snapshots removal regions and calls one lazy local worker.
+`text-removal-core.js` matches the selected source text and baseline to the
+original glyphs, rejects ambiguous overlapping selections, and removes only
+those characters while retaining image/vector content and font resources.
+All removal happens before replacement drawing, including multi-page moves.
+The worker installs its message handler before loading WASM so an immediate
+first save cannot lose its request. Output is rewritten with garbage collection.
+
+`renderer.js` reads original character encodings from PDF.js operators, avoiding
+assumptions about document-wide font counters. `saver.js` reuses the original
+font and encoding, including fonts inside nested Form XObjects (embedded PDF
+pages), and retains the original fill opacity. An explicit fallback notice
+appears when the original font cannot render the replacement. Source
+files are never overwritten and processing remains on the user's device.
+
+Scanned text is still an image and requires OCR; this change does not implement
+OCR or Word-style paragraph reflow. Overlapping text that cannot be isolated is
+reported rather than silently erasing a neighbour. Existing redaction annotations
+must be resolved first. Editing signed PDFs does not preserve signature validity.
+
+Runtime dependencies and interface fonts are self-hosted. After changing the
+pinned MuPDF npm version, run `npm run vendor:mupdf` and review its licensing and
+regression tests before publishing. The project's permissive license does not
+replace the bundled MuPDF AGPL/commercial licensing terms.
+
+## Fidelity and document preservation
+
+- Paragraph grouping follows aligned lines within each column, keeps original
+  leading, and leaves different fonts/sizes/colors as separate editable runs.
+  The editing notice flags text that overlaps another text block or exceeds the
+  page. Reflow across runs/pages is not automatic.
+- The original document remains the destination during saving. Its metadata,
+  attachments, form fields, annotations, links and bookmarks survive page edits.
+  Reordering retains page references and page labels; deletion removes obsolete
+  link/widget destinations. Merged forms receive a namespace to avoid duplicate
+  field names and colliding font resources; donor bookmarks and links are copied.
+  The editor does not expose a form-filling UI or validate digital signatures.
+- Visible PDF regions render at zoom × devicePixelRatio. Original loaded pages
+  share a 16-million-pixel base-preview budget; each visible detail surface is
+  limited to 8 million pixels and 4096 pixels per side. Offscreen detail surfaces
+  are released. Image decoding and DOM overlays consume additional memory; this
+  is a bitmap budget, not a bound on total browser memory.
+- Scans, image masks, ambiguous overlapping images, unusual clipping/blend groups
+  and fonts without usable glyph encodings can still require a different workflow.
+  The app reports an unsupported removal rather than painting a cover rectangle.
+
+## Browser validation
+
+Run `npm test` for Chromium desktop and touch-emulation regressions.
+Run `npm run test:browsers` for the desktop suite in Firefox and WebKit, plus
+mobile WebKit tap/edit/format/image/save/reopen scenarios. Install test engines
+with `npx playwright install chromium firefox webkit` first.
+
+The latest checked scenarios and limitations are recorded in [QA.md](QA.md).
+
+These are automated browser-engine and mobile-emulation checks. They do not
+substitute for testing on physical iOS/Android devices. Finger-drag coverage uses
+Chromium's touch input; mobile WebKit coverage uses Playwright touchscreen taps.
+
+Type3 fonts (vector glyph programs, including the supplied long report) are
+identified through their font descriptor when `/BaseFont` is absent. Their
+original glyph programs and FontMatrix are reused. Because such a font has no
+browser font file, the in-progress typing layer is approximate; after confirming
+an edit, the preview renders the exact PDF glyphs. The editor says this explicitly.
+
+The PDF.js standard-font programs (including Symbol/Dingbats) are bundled under
+`vendor/pdfjs-standard-fonts`, with their licenses. All document-loading paths use
+`pdf-loader.js`, which also disables font-code evaluation following the
+[PDF.js maintainer workaround for CVE-2024-4367](https://github.com/mozilla/pdf.js/security/advisories/GHSA-wgrm-67xf-hhpq).

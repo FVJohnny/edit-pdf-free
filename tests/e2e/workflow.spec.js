@@ -4,14 +4,16 @@ import { test, expect } from '@playwright/test';
 import {
     loadFixture, canvasPoint, drag, drawStroke, exitDrawMode,
     drawSignatureSquiggle, saveAndReload, pickPopoverColor, closePopover,
-    countPixels, IMAGE_PNG,
+    countPixels, IMAGE_PNG, settle,
 } from './helpers.js';
 
 test('full editing session: text + styles + draw + shapes + image + signature + pages → save → verify', async ({ page }) => {
     test.setTimeout(90_000);
+    page.setDefaultTimeout(10_000);
     await loadFixture(page);
 
     // 1. Edit an existing text
+    const originalTitleCount = await page.locator('.editable-text').filter({hasText:'PDF Bookmark Sample'}).count();
     const title = page.locator('.editable-text').filter({ hasText: 'PDF Bookmark Sample' }).first();
     await title.click();
     await page.keyboard.press('ControlOrMeta+a');
@@ -20,6 +22,7 @@ test('full editing session: text + styles + draw + shapes + image + signature + 
 
     // 2. Add a new red bold text
     await page.click('#addTextBtn');
+    await settle(page);
     const p = await canvasPoint(page, 0.55, 0.15);
     await page.mouse.click(p.x, p.y);
     await page.keyboard.type('Nuevo rojo');
@@ -27,7 +30,7 @@ test('full editing session: text + styles + draw + shapes + image + signature + 
     await page.click('#fmtColor');
     await pickPopoverColor(page, 2); // red
     await closePopover(page);
-    await page.keyboard.press('Escape');
+    await page.keyboard.press('Enter');
 
     // 3. Pen stroke + filled rect
     await drawStroke(page, 'pen', [0.1, 0.55], [0.35, 0.6]);
@@ -65,6 +68,11 @@ test('full editing session: text + styles + draw + shapes + image + signature + 
     // 8. Save → reload → verify everything landed
     await saveAndReload(page);
     await expect(page.locator('.pdf-viewer > div')).toHaveCount(5);
+
+    // Verify searchable content too: pixels alone can hide a failed replacement.
+    await expect(page.locator('.editable-text').filter({hasText: /^Sesion Completa$/})).toHaveCount(1);
+    await expect(page.locator('.editable-text').filter({hasText: /^Nuevo rojo$/})).toHaveCount(1);
+    await expect(page.locator('.editable-text').filter({hasText: 'PDF Bookmark Sample'})).toHaveCount(originalTitleCount - 1);
 
     // edited title text should render (dark pixels where the title sits)
     const titleArea = await page.evaluate(() => {

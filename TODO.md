@@ -56,7 +56,7 @@ A floating toolbar that appears when clicking on an image (similar to text forma
 - [x] **No preguntar compresión bajo un umbral** (p.ej. < 300 KB total)
 - [x] **Estimador de tamaño en PDFs grandes** — reconstruye todo el PDF en cada acción; usar requestIdleCallback/umbral y un spinner mientras calcula
 - [x] **Accesibilidad** — aria-labels en botones de solo-icono, foco visible, atajos de teclado documentados
-- [ ] **Cover rects sobre fondos no uniformes** — en fondos con textura/gradiente el rectángulo de cobertura se nota; considerar inpainting simple o muestreo por bordes
+- [x] **Cover rects sobre fondos no uniformes** — sustituidos por eliminación real de los textos e imágenes originales, conservando el fondo; se rechazan selecciones ambiguas.
 - [ ] **Unificar findVisiblePage / currentPageContainer** (lógica duplicada en app.js)
 - [~] **Tests e2e (Playwright) + CI** — descartado a propósito: las pruebas las ejecuta el agente (Claude) con el navegador siguiendo CLAUDE.md
 
@@ -137,3 +137,45 @@ A floating toolbar that appears when clicking on an image (similar to text forma
 - [x] **Cobertura e2e completada (revisión honesta)** — 14 tests más en coverage.spec.js: drag entre páginas con undo, import multi-imagen con modal de compresión (Balanced), rotar/borrar página desde el minimapa, zoom nítido (re-render del backing), recuperación de sesión con edición horneada, Shift+resize (aspecto), descargar imagen, contraseña errónea con reintento, ciclo del buscador, borrado multi-selección con un undo, Escape/Supr, borrar texto con undo, posición exacta de página insertada. Total: 76 tests + 3 táctiles
 - [x] **Suite táctil ampliada (7 tests móviles)** — armar-y-editar texto con dos toques, arrastre táctil de texto armado, tocar/arrastrar/redimensionar imagen con el dedo, resize de forma con el dedo desviado 10px, popover y toolbar dentro del viewport del móvil, no-scroll al dibujar, halo táctil
 - [x] **BUG cazado por los tests: tiradores táctiles de 22px nunca funcionaron** — el bloque @media(pointer:coarse) estaba ANTES de las reglas base con igual especificidad y quedaba pisado (los tiradores seguían a 10px en móvil). Bloque movido tras las reglas base; test de regresión asegura ≥20px en táctil
+
+## Text replacement review (2026-09-16)
+
+- [x] Review existing-text editing and assess real removal. Confirmed `saver.js` covers original text with rectangles; an isolated probe of `buildPdfBytes` retained ORIGINAL_MARKER after both replacement and deletion. MuPDF.js supports actual text redaction in-browser. Proposed integration must remove all original text regions before drawing replacements, preserve images/vector art, refresh the preview, handle coordinate transforms and font subsets, and assess AGPL/commercial licensing. Review only; editor behavior unchanged.
+
+## Real text editing (2026-09-16)
+
+- [x] Replace saved text masking with actual content removal, preserving graphics.
+- [x] Preserve original fonts and text styles; fix font identification and mixed-style grouping.
+- [x] Render real text removal in the editor, including undo and zoom.
+- [x] Add regression coverage for extraction, backgrounds, fonts, repeated edits and existing tools; full suite: 94 passed, desktop + touch, no retries (2026-09-16).
+- [x] Document the bundled engine, licensing and remaining format limitations.
+
+## Exhaustive browser QA (2026-09-16)
+
+- [x] Extend browser regression coverage to page rotations, nested PDF text and asynchronous recovery; final full suite: 103 passed (2.3m), desktop + touch, no retries.
+
+- [x] Prevent a slow autosave from writing the previous PDF under the next document's name; reproduced with a delayed WASM response.
+- [x] Preserve original fonts inside Form XObjects, including embedded Arial; verified after export/reload.
+- [x] Preserve original text fill opacity in preview/export and honor an explicit 100% override.
+- [x] Keep notification toasts from intercepting drawing/placement gestures; suppress existing element hit targets during text placement.
+- [x] Strengthen combined workflow assertions for actual exported text; make test coordinates account for sticky bars and completed scrolling.
+- [x] Add regression checks for 90/180/270-degree pages, accented multiline edits, cancellation and original font/size/color/opacity/position.
+
+## Long PDF preview sharpness (2026-09-16)
+
+- [x] Reproduce blurry long-page preview at 160% with the supplied PDF; render at zoom × devicePixelRatio, increase bounded backing budget for Retina report pages, apply initial sharp rendering and reject stale background dimensions. Verified supplied PDF at 3469 × 7325 (2 device pixels per CSS pixel) before/after editing; full suite: 104 passed, no retries (2.4m).
+
+## Complete editor improvements (2026-09-16)
+
+- [x] Show original-font compatibility and unsupported characters before saving.
+- [x] Improve paragraph grouping without merging different styles; detect overflowing edits.
+- [x] Render high-resolution previews only for visible page regions, with bounded memory.
+- [x] Remove original image occurrences instead of painting over them; preserve backgrounds and transparency.
+- [x] Preserve document structure (forms, links, bookmarks, annotations and metadata) when saving and managing pages.
+- [x] Validate Chromium, Firefox and WebKit desktop/mobile workflows, document physical-device limits. Full runs without retries: Chromium desktop/touch 124 passed (3.1m); Firefox/WebKit desktop and mobile WebKit 230 passed (5.9m). See QA.md.
+
+- [x] Preserve Type3 vector glyph programs in confirmed previews and exports; disclose the approximate typing layer.
+- [x] Keep the page left edge accessible at high zoom and release document workers when opening another PDF.
+- [x] Bundle PDF.js standard-font programs and disable font-code evaluation on every load path.
+- [x] Keep mobile formatting buttons and minimap controls stable during interaction.
+- [x] Document the tested scenarios, real-document comparison and remaining limits in QA.md.

@@ -68,9 +68,10 @@ test.describe('Images', () => {
         await expect(img).toBeVisible();
     });
 
-    test('existing PDF image can be dragged (original covered on save)', async ({ page }) => {
+    test('existing PDF image can be dragged', async ({ page }) => {
         await loadFixture(page);
         const img = page.locator('.draggable-image').first(); // Accelio logo
+        await img.scrollIntoViewIfNeeded();await settle(page);
         const before = await img.boundingBox();
         await drag(page, { x: before.x + before.width / 2, y: before.y + before.height / 2 },
             { x: before.x + before.width / 2 + 150, y: before.y + before.height / 2 + 100 });

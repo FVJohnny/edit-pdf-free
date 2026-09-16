@@ -54,8 +54,8 @@ test.describe('Regressions', () => {
         await drawSignatureSquiggle(page);
         await page.click('.modal-btn--confirm');
         await expect(page.locator('.draggable-image.selected')).toHaveCount(1);
-        const canvas = await page.locator('canvas.pdf-page').boundingBox();
-        await page.mouse.click(canvas.x + canvas.width - 30, canvas.y + canvas.height - 30);
+        const empty=await canvasPoint(page,.9,.65);
+        await page.mouse.click(empty.x,empty.y);
         await expect(page.locator('.draggable-image.selected')).toHaveCount(0);
         await drawStroke(page, 'pen', [0.2, 0.2], [0.4, 0.25]);
         await exitDrawMode(page);
@@ -169,7 +169,7 @@ test.describe('Regressions', () => {
     test('long-press style selection: viewer content is not natively selectable', async ({ page }) => {
         await startBlank(page);
         const us = await page.evaluate(() =>
-            getComputedStyle(document.querySelector('.pdf-viewer')).userSelect);
+            getComputedStyle(document.querySelector('.pdf-viewer')).getPropertyValue('user-select')||getComputedStyle(document.querySelector('.pdf-viewer')).getPropertyValue('-webkit-user-select'));
         expect(us).toBe('none');
     });
 
@@ -179,7 +179,7 @@ test.describe('Regressions', () => {
         const p = await canvasPoint(page, 0.4, 0.4);
         await page.mouse.click(p.x, p.y);
         const us = await page.evaluate(() =>
-            getComputedStyle(document.querySelector('.editable-text.editing')).userSelect);
+            getComputedStyle(document.querySelector('.editable-text.editing')).getPropertyValue('user-select')||getComputedStyle(document.querySelector('.editable-text.editing')).getPropertyValue('-webkit-user-select'));
         expect(us).toBe('text');
     });
 

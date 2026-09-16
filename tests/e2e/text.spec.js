@@ -9,7 +9,7 @@ async function addText(page, relX = 0.3, relY = 0.3) {
     await page.click('#addTextBtn');
     const p = await canvasPoint(page, relX, relY);
     await page.mouse.click(p.x, p.y);
-    const span = page.locator('.editable-text.modified').last();
+    const span = page.locator('.editable-text.modified').nth(await page.locator('.editable-text.modified').count()-1);
     await expect(span).toBeVisible();
     return span;
 }
@@ -75,7 +75,7 @@ test.describe('Text', () => {
             .toBe('rgba(0, 0, 0, 1)');
     });
 
-    test('edit an existing PDF text: green modified outline + cover on save', async ({ page }) => {
+    test('edit an existing PDF text: green modified outline', async ({ page }) => {
         await loadFixture(page);
         await page.locator('.editable-text').filter({ hasText: 'PDF Bookmark Sample' }).first().click();
         await page.keyboard.press('ControlOrMeta+a');
@@ -113,6 +113,8 @@ test.describe('Text', () => {
         await page.keyboard.press('Escape');
         await a.click({ modifiers: ['Shift'] });
         await b.click({ modifiers: ['Shift'] });
+        await expect(page.locator('.editable-text.multi-selected')).toHaveCount(2);
+        await canvasPoint(page,.5,.65);
         const beforeA = await a.boundingBox();
         const beforeB = await b.boundingBox();
         await drag(page, { x: beforeB.x + 5, y: beforeB.y + 5 },
