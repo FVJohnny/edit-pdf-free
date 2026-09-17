@@ -69,7 +69,9 @@ export async function savePDF(pdfBytes, textItems, imageItems, pageOrder, drawnS
 export async function buildPdfBytes(pdfBytes, textItems, imageItems, pageOrder, drawnStrokes, options = {}) {
     // A save/preview must use one stable edit snapshot even if the user types,
     // drags or switches documents while the worker is processing.
-    textItems = textItems.map(item => ({ ...item, subItems: item.subItems?.map(sub => ({...sub})) }));
+    textItems = textItems.map(item => ({ ...item,
+        renderNativePreview: item.nativePreview && !item.previewLifted && !item.element?.isContentEditable && !item.element?.classList.contains('dragging'),
+        subItems: item.subItems?.map(sub => ({...sub})) }));
     imageItems = imageItems.map(item => ({...item}));
     drawnStrokes = drawnStrokes?.map(stroke => ({...stroke, points: stroke.points.map(p => ({...p}))}));
     let doc = await assembleDocument(pdfBytes, pageOrder || []);
@@ -98,7 +100,7 @@ export async function buildPdfBytes(pdfBytes, textItems, imageItems, pageOrder, 
         if (typeof fontkit !== 'undefined') doc.registerFontkit(fontkit);
     }
     if (options.backgroundOnly) {
-        const native=textItems.filter(item=>item.nativePreview&&!item.element?.isContentEditable&&!item.element?.classList.contains('dragging')&&item.originalCovered&&!item.deleted);
+        const native=textItems.filter(item=>item.renderNativePreview&&item.originalCovered&&!item.deleted);
         if(native.length)await processModifiedText(doc,doc.getPages(),native.map(item=>({...item,previewRedraw:true})),await embedStandardFonts(doc),{});
         return doc.save();
     }

@@ -231,7 +231,7 @@ async function drawOverlaysOnThumb(ctx, container, sx, sy) {
         }
     }
     for (const el of container.querySelectorAll('.draggable-image')) {
-        if (el.style.display === 'none') continue;
+        if (el.style.display === 'none' || el.classList.contains('background-pending')) continue;
         if(!el.classList.contains('moved')&&!el.classList.contains('original-removed')&&!el.classList.contains('dragging'))continue;
         const match = el.style.backgroundImage?.match(/url\("?([^")]+)"?\)/);
         if (!match) continue;
@@ -247,7 +247,8 @@ async function drawOverlaysOnThumb(ctx, container, sx, sy) {
     }
     for (const span of container.querySelectorAll('.editable-text')) {
         if (span.style.display === 'none'||span.hasAttribute('data-native-preview')) continue;
-        if (!span.classList.contains('modified') && !span.classList.contains('moved')) continue;
+        if (span.classList.contains('background-pending')) continue;
+        if (!span.classList.contains('modified') && !span.classList.contains('moved') && !span.classList.contains('original-removed')) continue;
         const fontSize = parseFloat(span.style.fontSize) * sy;
         if (!fontSize) continue;
         ctx.font = `${span.style.fontWeight || '400'} ${fontSize}px sans-serif`;

@@ -1,5 +1,5 @@
 // ============================================
-// Canvas utilities — cover original positions, capture regions
+// Canvas utilities — transfer original content into editable overlays
 // ============================================
 
 /**
@@ -26,7 +26,8 @@ export function coverOriginalImage(imageItem) {
     if (imageItem.originalCovered) return;
     imageItem.originalCovered = true;
     imageItem.element.classList.add('original-removed');
-    document.dispatchEvent(new CustomEvent('text-background-change'));
+    if (imageItem.type === 'image') imageItem.element.classList.add('background-pending');
+    requestBackground();
 }
 
 /** Request a clean PDF rendering without the original text glyphs. */
@@ -34,9 +35,30 @@ export function coverOriginalText(textItem, spanWidth) {
     if (textItem.originalCovered) return;
     textItem.originalCovered = true;
     textItem.lastCoverWidth = spanWidth;
+    textItem.element.classList.add('original-removed', 'background-pending');
     // Request a real rendering with those original glyphs removed. Painting a
     // flat rectangle here would destroy gradients, borders and images.
-    document.dispatchEvent(new Event('text-background-change'));
+    requestBackground();
+}
+
+function requestBackground() {
+    document.dispatchEvent(new CustomEvent('text-background-change', { detail: { immediate: true } }));
+}
+
+/** Start on pointer-down, before the drag threshold, to hide the cold-start delay. */
+export function prepareTextDrag(item, width) {
+    if (!item.originalText) return;
+    item.previewLifted = true;
+    if (item.nativePreview && item.originalCovered) {
+        if (item.element.hasAttribute('data-native-preview')) {
+            item.element.classList.add('background-pending');
+            item.element.removeAttribute('data-native-preview');
+        }
+        // Also invalidate a confirmation preview that has not painted yet.
+        // It must not bake the text back into the page during this new drag.
+        requestBackground();
+    }
+    coverOriginalText(item, width);
 }
 
 /**

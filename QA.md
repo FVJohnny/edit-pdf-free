@@ -45,3 +45,20 @@ Documento largo abierto en el navegador local. Edición del título «Resumen op
 - La edición no conserva la validez de firmas digitales. La apertura con contraseña está cubierta; no se afirma cobertura completa de la exportación cifrada.
 
 Cambios locales, pendientes de revisión y publicación.
+
+
+## Corrección del arrastre — 17 de septiembre de 2026
+
+Se reproducía una segunda copia al mover texto o imágenes antes de que el motor terminara de quitar el original. Ahora se precarga el motor al acercar el puntero, la preparación del fondo comienza al pulsar y se omite el retardo de 100 ms para esa interacción. Se repintan las páginas afectadas.
+
+Las superficies de página y de alta resolución se actualizan junto con la visibilidad de los elementos móviles. Durante un arranque lento, el contorno sigue al cursor mientras se conserva una sola copia del contenido hasta que el fondo real está listo. No se emplean rectángulos de color para ocultar contenido. También se invalidan las confirmaciones pendientes de fuentes Type3 al volver a coger el texto.
+
+Las tres regresiones de texto, imagen y selección múltiple fallaron antes de la corrección. Las pruebas retienen intencionadamente la descarga de WASM para comprobar la transición con el botón pulsado; después verifican fondo, exportación y reapertura. Se amplía también la prueba Type3 para mover, deshacer y volver a mover durante una confirmación pendiente.
+
+Comprobación manual en navegador: movimiento del título del documento largo proporcionado y de una imagen transparente sobre un fondo de color atravesado por una línea vectorial. Fuente, transparencia y fondo conservados; sin errores de consola.
+
+Validación de esta corrección: suite completa Chromium de escritorio/táctil, **127 aprobadas (3,2 min)**; selección de carga, visor, arrastre, imágenes, fuentes y móvil en Firefox/WebKit, **46 aprobadas (1,4 min)**, sin reintentos. Tras añadir la protección para una confirmación Type3 pendiente, **13 regresiones Chromium aprobadas (32,1 s)**. La prueba Type3 reproduce el fallo si se retira esa protección.
+
+La primera pasada entre navegadores quedó afectada por varias suspensiones del Mac y no se acepta como validación; se repitió completa manteniéndolo despierto durante el proceso. Las pruebas de deshacer esperan la transición visual asíncrona y los gestos comprueban que el arrastre realmente se ha iniciado.
+
+Comprobación final de arrastre, imágenes y la carrera Type3 en Firefox/WebKit: **26 aprobadas (55,5 s)**, sin reintentos.

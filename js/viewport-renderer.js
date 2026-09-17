@@ -41,8 +41,9 @@ export async function resetPageRendering() {
     sourceDocuments.clear();
     document.dispatchEvent(new Event('pdf-document-reset'));
 }
-export async function setPagePreviewDocument(containers, doc) {
+export async function setPagePreviewDocument(containers, doc, commit = () => {}, isCurrent = () => true) {
     await cancelDetails();
+    if (!isCurrent()) return false;
     const old = previewDocument;
     previewDocument = doc;
     containers.forEach((container, i) => {
@@ -53,8 +54,12 @@ export async function setPagePreviewDocument(containers, doc) {
         }
         removeDetail(container);
     });
+    // Remove the old detail surfaces, replace the base pixels and reveal the
+    // overlays in one synchronous turn, so a frame can never show both copies.
+    commit();
     await old?.destroy();
-    return rerenderVisiblePages(viewer, density);
+    await rerenderVisiblePages(viewer, density);
+    return true;
 }
 export function scheduleVisiblePages() {
     clearTimeout(timer);

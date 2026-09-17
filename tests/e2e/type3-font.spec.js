@@ -63,6 +63,49 @@ test('Type3 font without BaseFont is retained with exact glyph programs in previ
         .poll(() => pixelAt(page, 55 / 500, 120 / 400))
         .toEqual([0, 0, 0]);
     expect(await pixelAt(page, 65 / 500, 120 / 400)).toEqual([255, 255, 255]);
+    // A confirmed Type3 edit is baked into the page preview. Picking it up
+    // again must remove that painted copy before showing the moving overlay.
+    const box = await changed.boundingBox();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width / 2 + 120, box.y + box.height / 2 + 60, { steps: 5 });
+    await expect.poll(() => pixelAt(page, 55 / 500, 120 / 400)).toEqual([255, 255, 255]);
+    await expect.poll(() => changed.evaluate(el => getComputedStyle(el).color)).not.toBe('rgba(0, 0, 0, 0)');
+    await expect(changed).not.toHaveAttribute('data-native-preview', 'true');
+    await page.mouse.up();
+    await expect(changed).toHaveAttribute('data-native-preview', 'true');
+    await page.getByRole('button', { name: 'Undo', exact: true }).click();
+    await expect.poll(() => pixelAt(page, 55 / 500, 120 / 400)).toEqual([0, 0, 0]);
+
+    // Hold the worker for a confirmation preview, then pick the text up again
+    // before that preview can paint. A stale confirmation must not repaint it
+    // underneath the moving overlay, even when no native-preview attribute has
+    // been applied yet.
+    await changed.click();
+    await expect.poll(() => pixelAt(page, 55 / 500, 120 / 400)).toEqual([255, 255, 255]);
+    await expect(page.locator('canvas.pdf-detail')).toBeVisible();
+    const oldDetail = await page.locator('canvas.pdf-detail').elementHandle();
+    let release, requested;
+    const gate = new Promise(resolve => { release = resolve; });
+    const request = new Promise(resolve => { requested = resolve; });
+    await page.route('**/vendor/pdf.worker.min.js', async route => { requested(); await gate; await route.continue(); });
+    await page.keyboard.press('Enter');
+    try {
+        await request;
+        const again = await changed.boundingBox();
+        await page.mouse.move(again.x + again.width / 2, again.y + again.height / 2);
+        await page.mouse.down();
+        await page.mouse.move(again.x + again.width / 2 + 120, again.y + again.height / 2 + 60, { steps: 5 });
+        release();
+        await expect.poll(() => oldDetail.evaluate(el => el.isConnected)).toBe(false);
+        expect(await pixelAt(page, 55 / 500, 120 / 400)).toEqual([255, 255, 255]);
+        await expect(changed).not.toHaveAttribute('data-native-preview', 'true');
+        await expect.poll(() => changed.evaluate(el => getComputedStyle(el).color)).not.toBe('rgba(0, 0, 0, 0)');
+        await page.mouse.up();
+        await expect(changed).toHaveAttribute('data-native-preview', 'true');
+        await page.getByRole('button', { name: 'Undo', exact: true }).click();
+        await expect.poll(() => pixelAt(page, 55 / 500, 120 / 400)).toEqual([0, 0, 0]);
+    } finally { release(); }
     await saveAndReload(page);
     await expect(
         page.locator('.editable-text').filter({ hasText: 'CAB' })

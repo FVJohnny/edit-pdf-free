@@ -246,9 +246,9 @@ test('undoing original image deletion restores the preview and exported image', 
     await expect(img).toBeHidden();
     await page.click('#undoBtn');
     await expect(img).toBeVisible();
-    expect(
-        await img.evaluate((el) => getComputedStyle(el).backgroundImage)
-    ).not.toBe('none');
+    // The overlay is revealed together with the clean page surface, avoiding
+    // two copies when undo beats the asynchronous original-image removal.
+    await expect.poll(() => img.evaluate((el) => getComputedStyle(el).backgroundImage)).not.toBe('none');
     await saveAndReload(page);
     await expect(page.locator('.draggable-image')).toHaveCount(1);
 });

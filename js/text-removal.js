@@ -5,6 +5,25 @@ const pending = new Map();
 export function removeOriginalText(bytes, regions, imageRegions = {}) {
     if (!Object.keys(regions).length && !Object.keys(imageRegions).length)
         return Promise.resolve({ bytes, styles: {} });
+    prepareTextRemoval();
+    return new Promise((resolve, reject) => {
+        const id = ++nextId;
+        const timer = setTimeout(
+            () =>
+                resetWorker(
+                    new Error(
+                        'Text editing timed out. Please try a smaller document.'
+                    )
+                ),
+            120000
+        );
+        pending.set(id, { resolve, reject, timer });
+        worker.postMessage({ id, bytes, regions, imageRegions });
+    });
+}
+
+/** Load the engine while the pointer approaches an existing editable item. */
+export function prepareTextRemoval() {
     if (!worker) {
         worker = new Worker(
             new URL('./text-removal-worker.js', import.meta.url),
@@ -30,20 +49,6 @@ export function removeOriginalText(bytes, regions, imageRegions = {}) {
                 )
             );
     }
-    return new Promise((resolve, reject) => {
-        const id = ++nextId;
-        const timer = setTimeout(
-            () =>
-                resetWorker(
-                    new Error(
-                        'Text editing timed out. Please try a smaller document.'
-                    )
-                ),
-            120000
-        );
-        pending.set(id, { resolve, reject, timer });
-        worker.postMessage({ id, bytes, regions, imageRegions });
-    });
 }
 function resetWorker(error) {
     worker?.terminate();

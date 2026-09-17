@@ -1127,3 +1127,20 @@ body.drag-over-page::after {
     color: transparent !important;
     background: transparent !important;
 }
+
+/* Paint only one copy during the canvas-to-overlay handover. The outline keeps
+   tracking the pointer even on a cold/slow engine; the original stays visible
+   until the real background is ready. Never cover the artwork with a flat fill. */
+.editable-text.original-removed,
+.editable-text.original-removed:hover:not(.modified):not(.editing) {
+    transition: none;
+    color: var(--text-color, black);
+}
+.editable-text.background-pending {
+    color: transparent !important;
+    background: transparent !important;
+    text-shadow: none !important;
+}
+.draggable-image.background-pending {
+    background-image: none !important;
+}

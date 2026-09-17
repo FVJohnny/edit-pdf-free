@@ -16,10 +16,11 @@ import { showFormatToolbar, repositionToolbar } from './toolbar.js';
 import { showImageToolbar, repositionImageToolbar, coverOriginalImage } from './image-toolbar.js';
 import { makeEditable } from './editor.js';
 import { sampleBgColor, sampleTextColor, sampleImageBgColor, rgbToCss } from './utils/color.js';
-import { coverOriginalText, captureCanvasRegion, layoutWidth, layoutHeight } from './utils/canvas.js';
+import { coverOriginalText, prepareTextDrag, captureCanvasRegion, layoutWidth, layoutHeight } from './utils/canvas.js';
 import { DRAG_THRESHOLD, MIN_RESIZE_PX, MIN_IMAGE_SIZE, FONT_BASELINE_RATIO } from './utils/constants.js';
 import { recordAction } from './history.js';
 import { toggleMultiSelect, isMultiSelected, getMultiSelection, multiSelectionSize } from './selection.js';
+import { prepareTextRemoval } from './text-removal.js';
 
 function clamp(value, min, max) {
     return Math.max(min, Math.min(max, value));
@@ -774,7 +775,7 @@ function makeGroupDrag(leadItem) {
         onCoverStart() {
             for (const s of starts) {
                 if (s.item.type) coverOriginalImage(s.item);
-                else coverOriginalText(s.item, s.item.lastCoverWidth || s.item.originalWidth);
+                else prepareTextDrag(s.item, s.item.lastCoverWidth || s.item.originalWidth);
                 s.item.element.classList.add('moved');
                 if (!s.item.type) s.item.element.classList.add('modified');
             }
@@ -791,6 +792,7 @@ function makeGroupDrag(leadItem) {
         },
         onDrop(recordEntries) {
             for (const s of starts) {
+                s.item.previewLifted = false;
                 s.item.moveOffsetX = parseFloat(s.item.element.style.left) - s.item.cssLeft;
                 s.item.moveOffsetY = parseFloat(s.item.element.style.top) - s.item.cssTop;
                 recordEntries.push({
@@ -811,6 +813,7 @@ function makeGroupDrag(leadItem) {
 /** Set up drag-to-move, click-to-select, and resize handles for an image overlay. */
 export function setupImageDrag(overlay, imageItemData, canvas) {
     let dragState = null;
+    if (imageItemData.type === 'image') overlay.addEventListener('pointerenter', prepareTextRemoval, { once: true });
 
     overlay.addEventListener('dragstart', (e) => e.preventDefault());
 
@@ -838,6 +841,7 @@ export function setupImageDrag(overlay, imageItemData, canvas) {
         }
 
         overlay.setPointerCapture(e.pointerId);
+        coverOriginalImage(imageItemData);
         const group = makeGroupDrag(imageItemData);
         const imgW = parseFloat(overlay.style.width);
         const imgH = parseFloat(overlay.style.height);
@@ -949,6 +953,7 @@ export function setupImageDrag(overlay, imageItemData, canvas) {
  * Supports shift-key for aspect ratio locking.
  */
 function startResize(mouseDownEvent, edge, overlay, imageItemData) {
+    coverOriginalImage(imageItemData);
     const startX = mouseDownEvent.clientX;
     const startY = mouseDownEvent.clientY;
     const origLeft = parseFloat(overlay.style.left);
@@ -1077,6 +1082,7 @@ function startResize(mouseDownEvent, edge, overlay, imageItemData) {
 /** Set up drag-to-move for a text span. Click without drag enters edit mode. */
 export function setupTextDrag(span, textItemData, canvas) {
     let dragState = null;
+    if (textItemData.originalText) span.addEventListener('pointerenter', prepareTextRemoval, { once: true });
 
     span.addEventListener('dragstart', (e) => e.preventDefault());
 
@@ -1106,6 +1112,7 @@ export function setupTextDrag(span, textItemData, canvas) {
         const startCanvasRect = startCanvas.getBoundingClientRect();
         const startPxScale = layoutWidth(startCanvas) / startCanvasRect.width;
 
+        prepareTextDrag(textItemData, spanRect.width * startPxScale);
         dragState = {
             startX: e.clientX,
             startY: e.clientY,
@@ -1133,7 +1140,6 @@ export function setupTextDrag(span, textItemData, canvas) {
             if (!dragState.hasMoved && Math.abs(dx) + Math.abs(dy) > DRAG_THRESHOLD) {
                 dragState.hasMoved = true;
                 span.classList.add('dragging');
-                if(textItemData.nativePreview){span.removeAttribute('data-native-preview');document.dispatchEvent(new Event('text-background-change'));}
                 showFormatToolbar(textItemData);
                 coverOriginalText(textItemData, dragState.spanWidth);
                 if (group.active) group.onCoverStart();
@@ -1167,6 +1173,7 @@ export function setupTextDrag(span, textItemData, canvas) {
             stopAutoScroll();
             if (!dragState) return;
 
+            textItemData.previewLifted = false;
             if (dragState.hasMoved) {
                 span.classList.remove('dragging');
                 span.classList.add('modified', 'moved');

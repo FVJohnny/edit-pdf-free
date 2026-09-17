@@ -824,10 +824,10 @@ let textBackgroundVersion = 0;
 let textBackgroundRunning = false;
 let textBackgroundPending = false;
 document.addEventListener('text-background-change', scheduleTextBackground);
-function scheduleTextBackground() {
+function scheduleTextBackground(event) {
     textBackgroundVersion++;
     clearTimeout(textBackgroundTimer);
-    textBackgroundTimer = setTimeout(refreshTextBackground, 100);
+    textBackgroundTimer = setTimeout(refreshTextBackground, event?.detail?.immediate ? 0 : 100);
 }
 async function refreshTextBackground() {
     if (!pdfBytes || !textItems.some(t => t.originalCovered && t.originalText) && !imageItems.some(i=>i.type==='image'&&i.originalCovered)) return;
@@ -838,6 +838,10 @@ async function refreshTextBackground() {
     try {
         const order = collectSaveState();
         const containers = [...pdfViewer.querySelectorAll(':scope > div')];
+        const covered = [...textItems, ...imageItems].filter(item => item.originalCovered);
+        const native = new Set(textItems.filter(item => item.nativePreview && item.originalCovered && !item.deleted && !item.previewLifted && !item.element.isContentEditable && !item.element.classList.contains('dragging')));
+        const affectedPages = new Set(covered.flatMap(item => [item.originPageIndex, item.finalPageIndex]));
+        const surfaces = [];
         const bytes = await buildPdfBytes(source, textItems, imageItems, order, [], { backgroundOnly: true, onOriginalStyles(styles) {
             if (version !== textBackgroundVersion || source !== pdfBytes) return;
             for (const item of textItems) {
@@ -853,6 +857,7 @@ async function refreshTextBackground() {
         if (version !== textBackgroundVersion || source !== pdfBytes) return;
         rendered = await loadPdfDocument(bytes).promise;
         for (let i = 0; i < containers.length; i++) {
+            if (!affectedPages.has(i)) continue;
             const canvas = containers[i].querySelector('canvas.pdf-page');
             if (!canvas) continue;
             const page = await rendered.getPage(i + 1);
@@ -866,14 +871,20 @@ async function refreshTextBackground() {
                 scheduleTextBackground();
                 return;
             }
-            canvas.getContext('2d').drawImage(off, 0, 0);
-
+            surfaces.push({ canvas, off });
         }
-        for(const item of textItems){
-            if(item.nativePreview&&item.originalCovered&&!item.deleted&&!item.element.isContentEditable)item.element.dataset.nativePreview='true';
-        }
-        await setPagePreviewDocument(containers, rendered);
-        rendered = null; // renderer owns the cleaned document until the next edit/load
+        const activated = await setPagePreviewDocument(containers, rendered, () => {
+            for (const { canvas, off } of surfaces) {
+                canvas.getContext('2d').drawImage(off, 0, 0);
+                off.width = off.height = 0;
+            }
+            for (const item of covered) {
+                if (native.has(item)) item.element.dataset.nativePreview = 'true';
+                else item.element.removeAttribute('data-native-preview');
+                item.element.classList.remove('background-pending');
+            }
+        }, () => version === textBackgroundVersion && source === pdfBytes);
+        if (activated) rendered = null; // renderer owns the cleaned document
         scheduleMinimapRebuild();
     } catch (error) {
         console.error('Text preview failed:', error);
@@ -881,7 +892,11 @@ async function refreshTextBackground() {
     } finally {
         await rendered?.destroy();
         textBackgroundRunning = false;
-        if (textBackgroundPending) { textBackgroundPending = false; scheduleTextBackground(); }
+        if (textBackgroundPending) {
+            textBackgroundPending = false;
+            clearTimeout(textBackgroundTimer);
+            textBackgroundTimer = setTimeout(refreshTextBackground, 0);
+        }
     }
 }
 

@@ -179,3 +179,7 @@ A floating toolbar that appears when clicking on an image (similar to text forma
 - [x] Bundle PDF.js standard-font programs and disable font-code evaluation on every load path.
 - [x] Keep mobile formatting buttons and minimap controls stable during interaction.
 - [x] Document the tested scenarios, real-document comparison and remaining limits in QA.md.
+
+## Drag preview handover (2026-09-17)
+
+- [x] Prevent duplicate-looking text/images while original content is removed: prepare on pointer-down, prioritize affected pages and swap canvas/overlays atomically; cover groups, Type3, undo and export with browser regressions.
